@@ -18,5 +18,5 @@ jobs:
                 repo-token: ${{ secrets.GITHUB_TOKEN }}
                 stale-issue-message: 'This issue has been declared stale by an automated github actions workflow.'
                 stale-issue-label: 'stale-issue'
-                stale-issue-message: 'This PR has been declared stale by an automated github actions workflow.'
+                stale-pr-message: 'This PR has been declared stale by an automated github actions workflow.'
                 stale-pr-label: 'stale-pr'
