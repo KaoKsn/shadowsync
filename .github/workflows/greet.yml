@@ -1,0 +1,37 @@
+name: Greet the first time contributor
+
+on:
+  pull_request:
+    type: [opened]
+  issues:
+    type: [opened]
+
+jobs:
+  welcome:
+    runs-on: ubuntu-22.04
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Greet the first time contributor.
+        uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d #v3.1.0
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
+            Thanks for your interest in contributing to this project. This appears to be your first issue.
+            Please read CODE_OF_CONDUCT.md to understand our community interaction standards.
+            Also read CONTRIBUTING.md to learn the rules to keep in mind while contributing to this project.
+
+            **It will be assumed that you have read the relavant text before contributing.**
+
+            Thanks and Regards,
+            Team shadowsync.
+          pr_message: |
+            Thanks for your interest in contributing to this project. This appears to be your first issue.
+            Please read CODE_OF_CONDUCT.md to understand our community interaction standards.
+            Also read CONTRIBUTING.md to learn the rules to keep in mind while contributing to this project.
+
+            It will be assumed that you have read the relavant text before contributing.
+
+            Thanks and Regards,
+            Team shadowsync.
