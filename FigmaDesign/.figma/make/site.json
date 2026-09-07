@@ -1,0 +1,10 @@
+{
+  "description": "Enhance your browsing experience with a privacy-focused AI agent that interacts with webpages while safeguarding sensitive information.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

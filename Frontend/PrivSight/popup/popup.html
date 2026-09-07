@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivSight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    
+    <!-- Top luminous Aurora Sweep bar -->
+    <div id="aurora-line" class="aurora-line">
+      <div class="aurora-sweep"></div>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <!-- Shield Logo -->
+        <svg class="logo-icon" width="16" height="16" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z" stroke="var(--accent)" stroke-width="1.25" stroke-linejoin="round"/>
+          <path d="M5 7.25 6.5 8.75 9.5 5.75" stroke="var(--accent)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="brand-title">PrivSight</span>
+        <span class="header-divider"></span>
+        <div class="status-indicator">
+          <span id="status-dot" class="status-dot"></span>
+          <span id="status-label" class="status-label">Ready</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="theme-toggle-btn" class="icon-btn" aria-label="Toggle Light/Dark Theme" title="Toggle Theme">
+          <!-- Sun Icon (shown in dark mode) -->
+          <svg id="theme-sun-icon" class="theme-icon" width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="2.7" stroke="currentColor" stroke-width="1.2" />
+            <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.75 2.75l1.05 1.05M10.2 10.2l1.05 1.05M2.75 11.25l1.05-1.05M10.2 3.8l1.05-1.05" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <!-- Moon Icon (shown in light mode) -->
+          <svg id="theme-moon-icon" class="theme-icon hidden" width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M12.2 8.5A5.5 5.5 0 1 1 5.5 1.8a4.5 4.5 0 0 0 6.7 6.7Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">
+          <svg width="15" height="15" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+            <circle cx="6.5" cy="6.5" r="2" stroke="currentColor" stroke-width="1.2" />
+            <path d="M6.5 1.5v1M6.5 10.5v1M1.5 6.5h1M10.5 6.5h1M3.1 3.1l.7.7M9.2 9.2l.7.7M9.2 3.8l-.7.7M3.8 9.2l-.7.7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Active Page Notice -->
+    <div id="active-notice" class="active-notice hidden">
+      <span class="status-dot-working active-pulse-dot"></span>
+      <span>PrivSight is active on this page</span>
+    </div>
+
+    <!-- Main Scrollable Chat / Content Area -->
+    <main id="chat-container" class="chat-container">
+      
+      <!-- 1. Empty State -->
+      <div id="empty-state" class="empty-state">
+        <h1 class="empty-title">How can I help<br>on this page?</h1>
+        <p class="empty-desc">
+          PrivSight can interact with the current page while keeping sensitive information protected.
+        </p>
+      </div>
+
+      <!-- 2. Page Unavailable State -->
+      <div id="unavailable-state" class="unavailable-state hidden">
+        <div class="slash-icon-wrap">
+          <svg width="28" height="28" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="23" height="23" rx="6" stroke="var(--border)" stroke-width="1.3" />
+            <path d="M17 9 9 17" stroke="var(--text-3)" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+        </div>
+        <h2 class="unavailable-title">Can't access this page</h2>
+        <p id="unavailable-reason" class="unavailable-desc">
+          PrivSight can't run on browser system pages. Open a regular webpage to get started.
+        </p>
+        <button id="open-tab-btn" class="outline-btn">Open a new tab</button>
+      </div>
+
+      <!-- 3. Message List -->
+      <div id="messages-list" class="messages-list"></div>
+
+      <!-- 4. Agent Working Status Panel -->
+      <div id="working-panel" class="working-panel hidden rise">
+        <div class="agent-avatar">
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z" stroke="var(--accent)" stroke-width="1.25" stroke-linejoin="round"/>
+            <path d="M5 7.25 6.5 8.75 9.5 5.75" stroke="var(--accent)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="working-content">
+          <div id="working-title" class="working-title">Working on this page</div>
+          <div id="working-detail" class="working-detail">Understanding the current webpage...</div>
+          <div id="working-steps" class="working-steps">
+            <!-- Dynamic Step Rows rendered here -->
+          </div>
+        </div>
+      </div>
+
+      <div id="scroll-anchor"></div>
+    </main>
+
+    <!-- Quick Actions Suggestions (Shown when idle & no messages) -->
+    <section id="quick-actions" class="quick-actions">
+      <div class="section-label">Try asking</div>
+      <div class="suggestions-list">
+        <button class="suggestion-btn" data-query="Find something on this page">
+          <span>Find something on this page</span>
+          <svg class="suggestion-arrow" width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M2 8 8 2M4 2h4v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button class="suggestion-btn" data-query="Fill out this form">
+          <span>Fill out this form</span>
+          <svg class="suggestion-arrow" width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M2 8 8 2M4 2h4v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button class="suggestion-btn" data-query="Summarize this page">
+          <span>Summarize this page</span>
+          <svg class="suggestion-arrow" width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M2 8 8 2M4 2h4v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- Chat Input Form -->
+    <div id="input-section" class="input-section">
+      <div class="input-wrapper">
+        <textarea
+          id="prompt"
+          rows="1"
+          placeholder="Ask PrivSight to do something..."
+        ></textarea>
+        <button id="send" class="send-btn" aria-label="Send prompt" disabled>
+          <svg width="14" height="14" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+            <path d="M11.5 6.5 1 2l1.8 4.5L1 11l10.5-4.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Privacy Statistics Footer -->
+    <footer id="privacy-footer" class="privacy-footer">
+      <div class="privacy-header">
+        <span class="section-label">Privacy protection</span>
+        <span id="privacy-status-badge" class="privacy-status-badge">
+          <span id="privacy-badge-dot" class="badge-dot"></span>
+          <span id="privacy-badge-text">Protected</span>
+        </span>
+      </div>
+
+      <!-- Stat Columns (Flow: Found -> Recognized -> Removed) -->
+      <div class="stats-grid">
+        <div class="stat-col">
+          <strong id="stat-data-found" class="stat-val">2,061</strong>
+          <span class="stat-label">Data found</span>
+        </div>
+        <div class="stat-col divider">
+          <strong id="stat-sensitive-recognized" class="stat-val">53</strong>
+          <span class="stat-label">Sensitive recognized</span>
+        </div>
+        <div class="stat-col divider">
+          <strong id="stat-sensitive-removed" class="stat-val">53</strong>
+          <span class="stat-label">Sensitive removed</span>
+        </div>
+      </div>
+
+      <!-- Flow Divider & Calculated Percentage Summary -->
+      <div class="privacy-summary-row">
+        <div class="progress-track">
+          <div id="privacy-progress-bar" class="progress-bar-fill" style="width: 100%;"></div>
+          <div id="progress-scan" class="progress-scan hidden"></div>
+        </div>
+        <div class="privacy-summary-text">
+          <span id="privacy-summary-percent">100%</span> sensitive data protected
+        </div>
+      </div>
+    </footer>
+
+    <!-- Settings Modal / Drawer -->
+    <div id="settings-drawer" class="settings-drawer hidden">
+      <div class="settings-header">
+        <h3>Extension Settings</h3>
+        <button id="close-settings-btn" class="icon-btn" aria-label="Close settings">
+          <svg width="14" height="14" viewBox="0 0 12 12" fill="none">
+            <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-content">
+        <div class="setting-item">
+          <div>
+            <strong>Light Mode Theme</strong>
+            <p>Switch between light and dark visual appearance</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-light-theme">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div>
+            <strong>Sensitive Data Masking</strong>
+            <p>Sanitize PII, emails, and financial data before sending</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-masking" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div>
+            <strong>Aurora Glow Effect</strong>
+            <p>Show visual border glow during active tasks</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-aurora" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div>
+            <strong>Page Freeze Protection</strong>
+            <p>Block background clicks while agent executes actions</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-freeze" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <button id="clear-chat-btn" class="outline-btn danger-btn">Clear Chat History</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

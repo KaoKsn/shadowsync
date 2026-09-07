@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "PrivSight",
+  "version": "2.0.0",
+  "description": "Privacy-preserving browser agent. Keeps your data safe while AI works on your behalf.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "tabs"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open PrivSight"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/agent.js"]
+    }
+  ]
+}

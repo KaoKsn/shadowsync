@@ -1,0 +1,248 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+@import 'tailwindcss';
+
+/* ─── Reset + root ──────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+  background: #05050a;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+textarea { font-family: inherit; }
+textarea::placeholder { color: var(--text-3); }
+input::placeholder     { color: var(--text-3); }
+
+/* ─── Design tokens ─────────────────────────────────── */
+:root {
+  --bg:            #0b0b0e;
+  --bg-outer:      #05050a;
+  --surface:       #111115;
+  --surface-2:     #17171c;
+  --surface-3:     #1d1d24;
+  --border:        #22222c;
+  --border-subtle: #17171f;
+  --text-1:        #edecea;
+  --text-2:        #74747e;
+  --text-3:        #44444e;
+  --accent:        #35b8cc;
+  --accent-dim:    #132e38;
+  --accent-glow:   rgba(53, 184, 204, 0.14);
+  --green:         #30c87a;
+  --green-dim:     rgba(48, 200, 122, 0.12);
+  --amber:         #d9952a;
+  --red:           #d95050;
+  --red-dim:       rgba(217, 80, 80, 0.10);
+}
+
+/* ─── Scrollbars ────────────────────────────────────── */
+::-webkit-scrollbar       { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ─────────────────────────────────────────────────────
+   Animations
+───────────────────────────────────────────────────── */
+
+/* Status dot — gentle pulse for idle/completed */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+.status-dot { animation: status-pulse 2.8s ease-in-out infinite; }
+
+/* Status dot — faster blink for working states */
+@keyframes working-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+.status-dot-working { animation: working-blink 1s ease-in-out infinite; }
+
+/* Rise — element entrance */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: rise 0.2s ease-out both; }
+
+/* Fade in */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.fade-in { animation: fade-in 0.25s ease-out both; }
+
+/* Thinking dots */
+@keyframes blink {
+  0%, 100% { opacity: 0.18; transform: translateY(0); }
+  50%       { opacity: 1;    transform: translateY(-1.5px); }
+}
+.dot {
+  display: inline-block;
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: var(--text-2);
+  animation: blink 1.3s ease-in-out infinite;
+}
+.dot:nth-child(2) { animation-delay: 0.15s; }
+.dot:nth-child(3) { animation-delay: 0.30s; }
+
+/* Active step ring */
+@keyframes step-ring {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 0 0 rgba(53,184,204,0); }
+  50%       { opacity: 0.5; box-shadow: 0 0 0 3px rgba(53,184,204,0.08); }
+}
+.step-ring { animation: step-ring 1.4s ease-in-out infinite; }
+
+/* ── Aurora: thin luminous sweep on the popup edge ── */
+@keyframes aurora-flow {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(480%); }
+}
+.aurora-sweep {
+  position: absolute;
+  inset: 0;
+  width: 22%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(53, 184, 204, 0.0) 10%,
+    rgba(80, 210, 230, 0.85) 50%,
+    rgba(53, 184, 204, 0.0) 90%,
+    transparent 100%
+  );
+  animation: aurora-flow 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Progress bar scan shimmer */
+@keyframes scan-shimmer {
+  0%   { left: -35%; opacity: 0; }
+  8%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { left: 120%; opacity: 0; }
+}
+.progress-scan {
+  position: absolute;
+  top: 0; bottom: 0; width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(53,184,204,0.45), transparent);
+  animation: scan-shimmer 2.1s linear infinite;
+}
+
+/* ─────────────────────────────────────────────────────
+   Utility component classes
+   (Hover states via CSS since inline styles can't do it)
+───────────────────────────────────────────────────── */
+
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-3);
+  padding: 5px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, background 0.12s;
+  line-height: 0;
+}
+.icon-btn:hover {
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.suggestion-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 5px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+  line-height: 1;
+}
+.suggestion-btn:hover { background: var(--surface-2); }
+.suggestion-btn:hover .suggestion-arrow { color: var(--text-2); }
+
+.suggestion-arrow {
+  color: var(--text-3);
+  line-height: 0;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.retry-btn {
+  background: none;
+  border: 1px solid rgba(217, 80, 80, 0.22);
+  border-radius: 5px;
+  color: var(--red);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.005em;
+  transition: background 0.12s, border-color 0.12s;
+}
+.retry-btn:hover {
+  background: var(--red-dim);
+  border-color: rgba(217, 80, 80, 0.38);
+}
+
+.outline-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 7px 16px;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.005em;
+  transition: border-color 0.12s, color 0.12s;
+}
+.outline-btn:hover {
+  border-color: var(--text-3);
+  color: var(--text-1);
+}
+
+.demo-state-btn {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 5px;
+  color: rgba(255,255,255,0.28);
+  font-size: 10.5px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.01em;
+  transition: all 0.15s;
+}
+.demo-state-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.5);
+}
+.demo-state-btn.active {
+  background: rgba(53,184,204,0.12);
+  border-color: rgba(53,184,204,0.3);
+  color: var(--accent);
+}
