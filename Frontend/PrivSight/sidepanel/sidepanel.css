@@ -200,6 +200,13 @@ body {
   color: var(--text-primary);
 }
 
+/* Close button — red tint on hover to signal dismiss */
+.ps-close-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
 /* ══════════════════════════════════════════════════════════════
    MAIN — Chat + Activity
    ══════════════════════════════════════════════════════════════ */

@@ -94,6 +94,7 @@
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
     themeToggle:     $('ps-theme-toggle'),
+    closeBtn:        $('ps-close-btn'),
     iconMoon:        $('ps-icon-moon'),
     iconSun:         $('ps-icon-sun'),
     chat:            $('ps-chat'),
@@ -500,6 +501,9 @@
     // Theme
     initTheme();
     el.themeToggle.addEventListener('click', toggleTheme);
+
+    // Close panel
+    el.closeBtn.addEventListener('click', () => window.close());
 
     // Find the active tab right away
     resolveActiveTab();
