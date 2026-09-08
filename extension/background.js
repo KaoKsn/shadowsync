@@ -38,20 +38,26 @@ api.commands.onCommand.addListener(async (command) => {
   }
 });
 
-api.runtime.onMessage.addListener((message) => {
+api.runtime.onMessage.addListener((message, sender) => {
   if (message.action !== "UPDATE_CLICKABLES") {
     return;
   }
 
-  handleClickableUpdate(message).catch((error) => {
+  handleClickableUpdate(message, sender).catch((error) => {
     if (DEBUG) {
       console.error("Error handling clickable update:", error);
     }
   });
 });
 
-async function handleClickableUpdate(message) {
+async function handleClickableUpdate(message, sender) {
   let screenshotData = null;
+
+  const tabId = sender.tab?.id; // sender info to clear hints immediately after screenshot.
+
+  if (!tabId) {
+    return;
+  }
 
   // Capture the current tab's screenshot
   try {
@@ -61,7 +67,6 @@ async function handleClickableUpdate(message) {
           reject(new Error(api.runtime.lastError.message));
           return;
         }
-
         resolve(dataUrl);
       });
     });
@@ -74,6 +79,11 @@ async function handleClickableUpdate(message) {
         error,
       );
     }
+  } finally {
+    // Clear hints immediately after screenshot.
+    await api.tabs.sendMessage(tabId, {
+      action: "REMOVE_HINTS",
+    });
   }
 
   const payloadPackage = {
