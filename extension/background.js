@@ -88,7 +88,8 @@ async function handleClickableUpdate(message, sender) {
 
   const payloadPackage = {
     url: message.payload.url,
-    dom: message.payload.elements,
+    dom: message.payload.dom,
+    elements: message.payload.elements,
     screenshot: screenshotData,
   };
 

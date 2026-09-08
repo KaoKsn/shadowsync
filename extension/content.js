@@ -31,9 +31,20 @@ function clearHints() {
   activeHints.clear();
 }
 
+// TODO: Alston: sanitize DOM and place $$REDACTED$$ instead of sensitive text info.
+function getSanitizedDOM() {
+  // NOTE: return in the form of string.
+  return '<!doctype html><html lang="en"><head><title>Example Domain</title><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:#eee;width:60vw;margin:15vh auto;font-family:system-ui,sans-serif}h1{font-size:1.5em}div{opacity:0.8}a:link,a:visited{color:#348}</style></head><body><div><h1>Example Domain</h1><p>This domain is for use in documentation examples without needing permission. Avoid use in operations.</p><p><a href="https://iana.org/domains/example">Learn more</a></p></div></body></html>';
+
+  // NOTE: Perform sanitization on a 'clone' and return the redacted clone.
+  // Retain the original values in some kind of map and we'll repopulate after screenshot (not to be handled by you)
+}
+
 // Scan, tag, and collect interactive elements for the LLM payload
 function updateClickables() {
   clearHints();
+
+  const sanitizedDOM = getSanitizedDOM();
 
   const elements = Array.from(
     document.querySelectorAll(CONFIG.selectors),
@@ -94,6 +105,7 @@ function updateClickables() {
     setTimeout(() => {
       sendToBackground({
         url: window.location.origin,
+        dom: sanitizedDOM,
         elements: payloadElements,
       });
     }, 50); // TODO: test if a lesser number can be used.
