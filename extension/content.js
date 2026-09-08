@@ -1,4 +1,6 @@
-// Configuration for Vimium-style keys and target selectors
+const api = typeof browser !== "undefined" ? browser : chrome;
+
+// Configuration for keyboard-based hints for clickable/interactive targets.
 const CONFIG = {
   chars: "0123456789",
   selectors:
@@ -8,7 +10,7 @@ const CONFIG = {
 
 let activeHints = new Map(); // Maps hint string -> DOM element
 
-// Generate Vimium-style character hints (base-N encoding)
+// Generate Hint strings using base-N encoding.
 function generateHintString(index, chars) {
   let hint = "";
   let len = chars.length;
@@ -87,45 +89,38 @@ function updateClickables() {
   });
 
   // Send mapped elements to extension background/LLM pipeline
-  sendToBackground(payloadElements);
+  sendToBackground({
+    url: window.location.origin,
+    elements: payloadElements,
+  });
 }
 
 // Send the payload
 function sendToBackground(data) {
   try {
-    chrome.runtime.sendMessage({ action: "UPDATE_CLICKABLES", payload: data });
+    api.runtime.sendMessage({ action: "UPDATE_CLICKABLES", payload: data });
   } catch (error) {
-    console.log("Failed to send the payload to the background!");
+    console.log("Couldn't process this page right now. Please try again.");
   }
 }
 
-// Handle dynamic DOM changes automatically using MutationObserver
-let debounceTimer;
-const observer = new MutationObserver((mutations) => {
-  // Ignore mutations caused by our own hint badges to avoid infinite loops
-  const isSelfMutation = mutations.every(
-    (m) =>
-      Array.from(m.addedNodes).some((n) =>
-        n.classList?.contains(CONFIG.badgeClass),
-      ) ||
-      Array.from(m.removedNodes).some((n) =>
-        n.classList?.contains(CONFIG.badgeClass),
-      ),
-  );
+// Listen for the hotkey trigger from background.js
+api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Mark hints and send the payload on Alt+k
+  if (message.action === "TRIGGER_CAPTURE") {
+    const start = performance.now();
 
-  if (isSelfMutation) return; // ignore self mutations.
-
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    updateClickables();
-  }, 300); // Debounce frequent layout/DOM updates
-});
-
-// run_at: document_end, so fire script immediately after injection by the browser.
-updateClickables();
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-  attributes: true,
-  attributeFilter: ["style", "class", "disabled"],
+    try {
+      updateClickables(); // Scan DOM, badges elements, and send to fastapi backend.
+    } catch (e) {
+      console.log("Extension failed to process DOM");
+    } finally {
+      const end = performance.now();
+      console.log(`Processing complete. Took: ${(end - start).toFixed(2)} ms`);
+    }
+  }
+  // Clear hints on Alt+c.
+  if (message.action === "REMOVE_HINTS") {
+    clearHints();
+  }
 });
