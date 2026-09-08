@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "PrivySight",
+  "version": "1.0",
+  "description": "Scans and maps interactive elements for LLM payloads.",
+  "permissions": ["activeTab", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "commands": {
+    "trigger-capture-and-hints": {
+      "suggested_key": {
+        "default": "Alt+K",
+        "mac": "Alt+K"
+      },
+      "description": "Capture DOM and screenshot to for LLM agent"
+    },
+    "remove-hints": {
+      "suggested_key": {
+        "default": "Alt+C",
+        "mac": "Alt+C"
+      },
+      "description": "Clear screen hints."
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
