@@ -1,6 +1,6 @@
 // Configuration for Vimium-style keys and target selectors
 const CONFIG = {
-  chars: "asdfgqwertzxcvb",
+  chars: "0123456789",
   selectors:
     "a, button, input, textarea, [role='button'], [tabindex]:not([tabindex='-1'])",
   badgeClass: "llm-hint-badge",
@@ -67,7 +67,6 @@ function updateClickables() {
       box-shadow: 0 1px 2px rgba(0,0,0,0.2);
       pointer-events: none;
     `;
-
     // Position badge relative to element
     const rect = element.getBoundingClientRect();
     badge.style.top = `${window.scrollY + rect.top}px`;
@@ -91,8 +90,13 @@ function updateClickables() {
   sendToBackground(payloadElements);
 }
 
+// Send the payload
 function sendToBackground(data) {
-  chrome.runtime.sendMessage({ action: "UPDATE_CLICKABLES", payload: data });
+  try {
+    chrome.runtime.sendMessage({ action: "UPDATE_CLICKABLES", payload: data });
+  } catch (error) {
+    console.log("Failed to send the payload to the background!");
+  }
 }
 
 // Handle dynamic DOM changes automatically using MutationObserver
@@ -109,7 +113,7 @@ const observer = new MutationObserver((mutations) => {
       ),
   );
 
-  if (isSelfMutation) return;
+  if (isSelfMutation) return; // ignore self mutations.
 
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
@@ -117,13 +121,11 @@ const observer = new MutationObserver((mutations) => {
   }, 300); // Debounce frequent layout/DOM updates
 });
 
-// Initialization
-document.addEventListener("DOMContentLoaded", () => {
-  updateClickables();
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["style", "class", "disabled"],
-  });
+// run_at: document_end, so fire script immediately after injection by the browser.
+updateClickables();
+observer.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ["style", "class", "disabled"],
 });
