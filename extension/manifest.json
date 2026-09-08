@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "PrivySight",
+  "name": "PrivSight",
   "version": "1.0",
   "description": "Scans and maps interactive elements for LLM payloads.",
   "permissions": ["activeTab", "tabs"],

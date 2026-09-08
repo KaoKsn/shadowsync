@@ -52,6 +52,8 @@ function updateClickables() {
     const hint = generateHintString(index, CONFIG.chars);
     activeHints.set(hint, element);
 
+    // Add the data-item tag to the element.
+    element.setAttribute("data-hint", hint);
     // Create visual badge
     const badge = document.createElement("span");
     badge.className = CONFIG.badgeClass;
@@ -87,11 +89,14 @@ function updateClickables() {
       type: element.type || null,
     });
   });
-
-  // Send mapped elements to extension background/LLM pipeline
-  sendToBackground({
-    url: window.location.origin,
-    elements: payloadElements,
+  // Wait for the hint badges to be painted before requesting the screenshot.
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      sendToBackground({
+        url: window.location.origin,
+        elements: payloadElements,
+      });
+    }, 50); // TODO: test if a lesser number can be used.
   });
 }
 
