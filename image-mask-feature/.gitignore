@@ -1,0 +1,33 @@
+# Local virtual environments and Python caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local model files; download these during setup instead of committing them
+models/
+*.onnx
+*.ort
+
+# User screenshots and generated redacted images
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+
+# Local test images are optional; keep them out of the shared repository by default
+test-images/*
+!test-images/.gitkeep
+
+# Local secrets and IDE files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
