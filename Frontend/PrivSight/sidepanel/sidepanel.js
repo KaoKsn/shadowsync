@@ -94,6 +94,7 @@
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
     themeToggle:     $('ps-theme-toggle'),
+    dashboardBtn:    $('ps-dashboard-btn'),
     closeBtn:        $('ps-close-btn'),
     iconMoon:        $('ps-icon-moon'),
     iconSun:         $('ps-icon-sun'),
@@ -285,6 +286,33 @@
     });
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // SESSION PERSISTENCE — saves completed sessions to chrome.storage
+  // ══════════════════════════════════════════════════════════════
+
+  /**
+   * persistSession(sessionData)
+   * Appends a session record to chrome.storage.local under 'privsight-history'.
+   * The dashboard reads this key to show all-time analytics.
+   */
+  async function persistSession(sessionData) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ 'privsight-history': [] }, (result) => {
+        const history = result['privsight-history'];
+        history.push(sessionData);
+        chrome.storage.local.set({ 'privsight-history': history }, resolve);
+      });
+    });
+  }
+
+  /**
+   * openDashboard()
+   * Opens the analytics dashboard in a new browser tab.
+   */
+  function openDashboard() {
+    chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
+  }
+
   /** showAurora — visual alias for lockPage (ready for visual-only separation) */
   async function showAurora() { return lockPage(); }
 
@@ -333,7 +361,7 @@
     });
 
     // Completion — ~10 seconds total
-    const doneT = setTimeout(() => {
+    const doneT = setTimeout(async () => {
       stats.sensitiveRemoved = stats.sensitiveRecognized;
       updatePrivacyStats({ ...stats });
 
@@ -350,6 +378,41 @@
 
       // Unlock the page
       unlockPage();
+
+      // ── Persist session to storage for the Dashboard ──
+      // Resolve the current tab domain
+      let domain = 'Unknown';
+      try {
+        const tabs = await new Promise(r => chrome.tabs.query({ active: true, currentWindow: true }, r));
+        if (tabs && tabs[0] && tabs[0].url) {
+          domain = new URL(tabs[0].url).hostname || 'Unknown';
+        }
+      } catch (_) {}
+
+      // Build per-type breakdown (simulated)
+      const totalSensitive = stats.sensitiveRecognized;
+      const breakdown = {
+        email:      Math.round(totalSensitive * 0.35),
+        phone:      Math.round(totalSensitive * 0.20),
+        creditCard: Math.round(totalSensitive * 0.15),
+        ssn:        Math.round(totalSensitive * 0.10),
+        password:   Math.round(totalSensitive * 0.12),
+        other:      totalSensitive - Math.round(totalSensitive * 0.92),
+      };
+
+      await persistSession({
+        id:                  Date.now(),
+        timestamp:           new Date().toISOString(),
+        domain,
+        prompt,
+        dataFound:           stats.dataFound,
+        sensitiveRecognized: stats.sensitiveRecognized,
+        sensitiveRemoved:    stats.sensitiveRemoved,
+        protectionRate:      stats.sensitiveRecognized > 0
+                               ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
+                               : 100,
+        breakdown,
+      });
 
       // Return to idle after 4 seconds
       const idleT = setTimeout(() => {
@@ -501,6 +564,9 @@
     // Theme
     initTheme();
     el.themeToggle.addEventListener('click', toggleTheme);
+
+    // Dashboard button
+    el.dashboardBtn.addEventListener('click', openDashboard);
 
     // Close panel
     el.closeBtn.addEventListener('click', () => window.close());

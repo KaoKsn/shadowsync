@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrivSight — Analytics Dashboard</title>
+  <meta name="description" content="PrivSight all-time privacy analytics dashboard. View session history, protection rates, data type breakdowns, and top protected domains." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+
+  <!-- Liquid glass cursor -->
+  <div id="db-cursor" aria-hidden="true"></div>
+  <div id="db-cursor-trail" aria-hidden="true"></div>
+
+  <!-- ══════════════════════════════════════════════════════
+       TOPBAR
+  ══════════════════════════════════════════════════════ -->
+  <header class="db-topbar" id="db-topbar">
+    <div class="db-topbar__inner">
+      <div class="db-topbar__brand">
+        <div class="db-brand-logo" id="db-brand-logo">
+          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z"
+                  stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M5 7.25 6.5 8.75 9.5 5.75"
+                  stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span class="db-brand-name">PrivSight</span>
+        <span class="db-brand-sep">/</span>
+        <span class="db-brand-page">Analytics Dashboard</span>
+      </div>
+
+      <div class="db-topbar__actions">
+        <span class="db-last-updated" id="db-last-updated">Loading...</span>
+
+        <button class="db-btn db-btn--ghost" id="db-export-btn" title="Export history as CSV">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export CSV
+        </button>
+
+        <button class="db-icon-btn" id="db-theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+          <svg id="db-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg id="db-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════
+       MAIN
+  ══════════════════════════════════════════════════════ -->
+  <main class="db-main" id="db-main">
+
+    <!-- Hero banner -->
+    <section class="db-hero" id="db-hero">
+      <div class="db-hero__glow" aria-hidden="true"></div>
+      <div class="db-hero__content">
+        <div class="db-hero__title-group">
+          <h1 class="db-hero__title">Privacy Analytics</h1>
+          <p class="db-hero__sub">All-time protection statistics across every session</p>
+        </div>
+
+        <div class="db-hero__stats" id="db-hero-stats">
+          <div class="db-hstat" id="db-hstat-sessions">
+            <span class="db-hstat__num" id="db-total-sessions">0</span>
+            <span class="db-hstat__lbl">Sessions Run</span>
+          </div>
+          <div class="db-hstat__div" aria-hidden="true"></div>
+          <div class="db-hstat" id="db-hstat-found">
+            <span class="db-hstat__num" id="db-total-found">0</span>
+            <span class="db-hstat__lbl">Data Points Found</span>
+          </div>
+          <div class="db-hstat__div" aria-hidden="true"></div>
+          <div class="db-hstat" id="db-hstat-sensitive">
+            <span class="db-hstat__num" id="db-total-sensitive">0</span>
+            <span class="db-hstat__lbl">Sensitive Items</span>
+          </div>
+          <div class="db-hstat__div" aria-hidden="true"></div>
+          <div class="db-hstat" id="db-hstat-removed">
+            <span class="db-hstat__num" id="db-total-removed">0</span>
+            <span class="db-hstat__lbl">Items Removed</span>
+          </div>
+          <div class="db-hstat__div" aria-hidden="true"></div>
+          <div class="db-hstat db-hstat--accent" id="db-hstat-rate">
+            <span class="db-hstat__num db-hstat__num--big" id="db-protection-rate">0%</span>
+            <span class="db-hstat__lbl">Protection Rate</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Empty state -->
+    <div class="db-empty" id="db-empty" style="display:none;">
+      <div class="db-empty__icon">
+        <svg width="36" height="36" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z"
+                stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+          <path d="M5 7.25 6.5 8.75 9.5 5.75"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h2 class="db-empty__title">No sessions yet</h2>
+      <p class="db-empty__sub">Run your first PrivSight task in the side panel.<br>Your privacy analytics will appear here.</p>
+    </div>
+
+    <!-- Grid layout -->
+    <div class="db-grid" id="db-grid" style="display:none;">
+
+      <!-- Left column -->
+      <div class="db-col db-col--left">
+
+        <!-- Protection Trend Chart -->
+        <section class="db-card" id="db-card-trend">
+          <div class="db-card__head">
+            <h2 class="db-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Protection Rate Trend
+            </h2>
+            <span class="db-card__badge" id="db-trend-badge"></span>
+          </div>
+          <div class="db-chart-wrap" id="db-chart-wrap">
+            <svg class="db-chart" id="db-chart" aria-label="Protection rate trend chart" role="img">
+              <defs>
+                <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/>
+                  <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div class="db-chart__legend">
+            <span class="db-legend-dot"></span>
+            <span>Protection % per session</span>
+          </div>
+        </section>
+
+        <!-- Data Type Breakdown -->
+        <section class="db-card" id="db-card-breakdown">
+          <div class="db-card__head">
+            <h2 class="db-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Sensitive Data Types
+            </h2>
+          </div>
+          <div class="db-breakdown" id="db-breakdown"></div>
+        </section>
+
+        <!-- Top Protected Domains -->
+        <section class="db-card" id="db-card-domains">
+          <div class="db-card__head">
+            <h2 class="db-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Top Protected Domains
+            </h2>
+          </div>
+          <ul class="db-domains" id="db-domains"></ul>
+        </section>
+
+      </div>
+
+      <!-- Right column — Session History -->
+      <div class="db-col db-col--right">
+        <section class="db-card db-card--full" id="db-card-history">
+          <div class="db-card__head">
+            <h2 class="db-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Session History
+            </h2>
+            <button class="db-btn db-btn--danger db-btn--sm" id="db-clear-btn" title="Clear all history">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              Clear History
+            </button>
+          </div>
+
+          <div class="db-table-wrap">
+            <table class="db-table" id="db-table" aria-label="Session history">
+              <thead>
+                <tr>
+                  <th>Date &amp; Time</th>
+                  <th>Domain</th>
+                  <th>Task</th>
+                  <th class="db-th--num">Found</th>
+                  <th class="db-th--num">Sensitive</th>
+                  <th class="db-th--num">Removed</th>
+                  <th class="db-th--num">Rate</th>
+                </tr>
+              </thead>
+              <tbody id="db-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Confirm modal -->
+  <div class="db-modal-overlay" id="db-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="db-modal-title">
+    <div class="db-modal">
+      <div class="db-modal__icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <h3 class="db-modal__title" id="db-modal-title">Clear all history?</h3>
+      <p class="db-modal__body">This will permanently delete all <strong id="db-modal-count">0</strong> session records. This cannot be undone.</p>
+      <div class="db-modal__actions">
+        <button class="db-btn db-btn--ghost" id="db-modal-cancel">Cancel</button>
+        <button class="db-btn db-btn--danger" id="db-modal-confirm">Yes, clear everything</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
