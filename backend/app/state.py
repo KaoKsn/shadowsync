@@ -2,21 +2,26 @@ from typing import TypedDict, Literal, Optional
 
 
 class ElementRef(TypedDict):
-    """One interactive element from the client's sanitized DOM snapshot."""
-    data_item: str            # unique id assigned by the extension, e.g. "17"
-    element_id: Optional[str] # native HTML id attribute, if the element has one
-    tag: str                  # "button", "input", "a", etc.
-    role: Optional[str]       # aria role, if any
-    value: Optional[str]      # visible text/value, already PII-redacted client-side
-
+    data_hint: str                 # Unique PrivSight reference, e.g. "17"
+    element_id: Optional[str]      # Native HTML id, if present
+    tag: str                        # HTML tag, e.g. "button", "input", "a"
+    role: Optional[str]             # ARIA role, if present
+    value: Optional[str]            # Visible text/value, PII-redacted
+    aria_label: Optional[str]       # Accessible name/label
+    placeholder: Optional[str]      # Input placeholder text
+    name: Optional[str]             # HTML name attribute
+    type: Optional[str]             # Input type, e.g. "email", "checkbox"
+    href: Optional[str]             # Link destination, if applicable
+    disabled: bool                  # Whether the element is disabled
+    checked: Optional[bool]         # Checked state for checkbox/radio
 
 class AgentAction(TypedDict):
     """A single action the agent wants the client to execute."""
-    type: Literal["CLICK", "TYPE", "SCROLL", "DONE"]
-    data_item: Optional[str]   # required for CLICK / TYPE, unused for SCROLL / DONE
-    element_id: Optional[str]  # native HTML id of the target element, if known
-    text: Optional[str]        # required for TYPE, unused otherwise
-    reasoning: Optional[str]   # short justification from the model, useful for debugging/demo
+    type: Literal["CLICK", "TYPE", "SCROLL", "DONE", "USER"]
+    data_hint: Optional[str]    # matches ElementRef.data_hint of the target element
+    element_id: Optional[str]   # native HTML id of the target element, if known
+    text: Optional[str]         # TYPE: text to type. USER: instruction for the human. unused otherwise
+    reasoning: Optional[str]    # short justification from the model, useful for debugging/demo
 
 
 class AgentState(TypedDict):
@@ -37,3 +42,4 @@ class AgentState(TypedDict):
     is_valid: bool
     is_complete: bool
     error: Optional[str]
+    response_payload: Optional[dict]

@@ -35,5 +35,9 @@ def mark_complete(session_id: str) -> None:
     session.is_complete = True
 
 
-def reset_session(session_id: str) -> None:
-    _sessions.pop(session_id, None)
+def reset_session(session_id: str) -> bool:
+    """Removes a session entirely -- used both for explicit mid-task
+    cancellation and for automatic cleanup once a task completes.
+    Returns True if a session actually existed and was removed.
+    """
+    return _sessions.pop(session_id, None) is not None
