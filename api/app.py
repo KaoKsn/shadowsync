@@ -28,7 +28,6 @@ class PayloadItem(BaseModel):
 
 class PagePayload(BaseModel):
     url: str
-    dom: str
     elements: List[PayloadItem]
     screenshot: str | None = None  # img as base64 string.
 
@@ -50,9 +49,9 @@ async def upload_dom_payload(payload: PagePayload):
             print("url: ", payload.url)
         if payload.screenshot:
             print("ScreenShot is present in the payload")
+            save_screenshot(payload.screenshot)
         else:
             print(f"ScreenShot missing from the payload..")
-        print("DOM: ", payload.dom)
         for element in payload.elements[:10]:  # Print first 3 elements as a sample
             print(element)
 
@@ -68,3 +67,25 @@ async def upload_dom_payload(payload: PagePayload):
 @app.get("/health")
 async def health():
     return RedirectResponse("/")
+
+
+import base64
+from pathlib import Path
+
+
+def save_screenshot(screenshot: str, filename: str = "screenshot.png") -> None:
+    if not screenshot:
+        return
+
+    # Handle data URLs such as:
+    # data:image/png;base64,iVBORw0KGgo...
+    if "," in screenshot:
+        _, encoded_data = screenshot.split(",", 1)
+    else:
+        encoded_data = screenshot
+
+    image_data = base64.b64decode(encoded_data)
+
+    Path(filename).write_bytes(image_data)
+
+    print(f"Screenshot saved to {filename}")

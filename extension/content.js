@@ -102,13 +102,12 @@ function updateClickables() {
   });
   // Wait for the hint badges to be painted before requesting the screenshot.
   requestAnimationFrame(() => {
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       sendToBackground({
         url: window.location.origin,
-        dom: sanitizedDOM,
         elements: payloadElements,
       });
-    }, 50); // TODO: test if a lesser number can be used.
+    });
   });
 }
 
