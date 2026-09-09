@@ -12,19 +12,12 @@
         "mac": "Alt+K"
       },
       "description": "Capture DOM and screenshot to for LLM agent"
-    },
-    "remove-hints": {
-      "suggested_key": {
-        "default": "Alt+C",
-        "mac": "Alt+C"
-      },
-      "description": "Clear screen hints."
     }
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["html2canvas.min.js", "content.js"],
       "run_at": "document_end"
     }
   ],

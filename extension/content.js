@@ -1,3 +1,4 @@
+const DEBUG = false;
 const api = typeof browser !== "undefined" ? browser : chrome;
 
 // Configuration for keyboard-based hints for clickable/interactive targets.
@@ -23,12 +24,9 @@ function generateHintString(index, chars) {
   return hint;
 }
 
-// Clear existing visual hint badges
+// Clear existing visual hint badges.
 function clearHints() {
-  document
-    .querySelectorAll(`.${CONFIG.badgeClass}`)
-    .forEach((el) => el.remove());
-  activeHints.clear();
+  activeHints.clear(); // free the map.
 }
 
 // TODO: Alston: sanitize DOM and place $$REDACTED$$ instead of sensitive text info.
@@ -41,7 +39,7 @@ function getSanitizedDOM() {
 }
 
 // Scan, tag, and collect interactive elements for the LLM payload
-function updateClickables() {
+async function updateClickables() {
   clearHints();
 
   const sanitizedDOM = getSanitizedDOM();
@@ -58,35 +56,28 @@ function updateClickables() {
   });
 
   const payloadElements = [];
+  const badgeData = [];
 
+  document.querySelectorAll("img").forEach((img) => {
+    if (img.loading === "lazy") {
+      img.loading = "eager"; // Force immediate load
+    }
+  });
   elements.forEach((element, index) => {
     const hint = generateHintString(index, CONFIG.chars);
     activeHints.set(hint, element);
 
     // Add the data-item tag to the element.
     element.setAttribute("data-hint", hint);
-    // Create visual badge
-    const badge = document.createElement("span");
-    badge.className = CONFIG.badgeClass;
-    badge.textContent = hint.toUpperCase();
-    badge.style.cssText = `
-      position: absolute;
-      background: #ffeb3b;
-      color: #000;
-      font-size: 10px;
-      font-weight: bold;
-      padding: 1px 3px;
-      z-index: 2147483647;
-      border: 1px solid #fbc02d;
-      border-radius: 2px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-      pointer-events: none;
-    `;
+
     // Position badge relative to element
     const rect = element.getBoundingClientRect();
-    badge.style.top = `${window.scrollY + rect.top}px`;
-    badge.style.left = `${window.scrollX + rect.left}px`;
-    document.body.appendChild(badge);
+    // Save the position of the hint in memory.
+    badgeData.push({
+      text: hint.toUpperCase(),
+      top: window.scrollY + rect.top,
+      left: window.scrollX + rect.left,
+    });
 
     // Collect metadata for LLM
     payloadElements.push({
@@ -100,15 +91,48 @@ function updateClickables() {
       type: element.type || null,
     });
   });
-  // Wait for the hint badges to be painted before requesting the screenshot.
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      sendToBackground({
-        url: window.location.origin,
-        elements: payloadElements,
-      });
+
+  try {
+    // Generate screenshot cleanly in memory without flashing DOM badges
+    const canvas = await html2canvas(document.body, {
+      x: window.scrollX,
+      y: window.scrollY,
+      width: window.innerWidth, // Just capture the view of the user. fullWidth, 0, 0 => innerWidth, scroll[XY]
+      height: window.innerHeight,
+      windowWidth: document.documentElement.clientWidth,
+      windowHeight: document.documentElement.clientHeight,
+      scale: 1, // enforce a strict 1:1 pixel ratio.
+      useCORS: true, // solves image missing problems.
+      logging: false,
     });
-  });
+
+    const ctx = canvas.getContext("2d");
+
+    // Programmatically paint visual badges directly onto the image buffer
+    badgeData.forEach((badge) => {
+      ctx.fillStyle = "#ffeb3b";
+      ctx.strokeStyle = "#fbc02d";
+      ctx.lineWidth = 1;
+
+      ctx.fillRect(badge.left, badge.top, 20, 14);
+      ctx.strokeRect(badge.left, badge.top, 20, 14);
+
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 10px sans-serif";
+      ctx.fillText(badge.text, badge.left + 2, badge.top + 10);
+    });
+
+    const screenshotData = canvas.toDataURL("image/png");
+
+    // Send the screenshot to service worker.
+    sendToBackground({
+      url: window.location.origin,
+      elements: payloadElements,
+      screenshot: screenshotData,
+    });
+  } catch (error) {
+    if (DEBUG) console.log("Canvas Screenshot generation Failed!", error);
+  }
 }
 
 // Send the payload
@@ -134,9 +158,5 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const end = performance.now();
       console.log(`Processing complete. Took: ${(end - start).toFixed(2)} ms`);
     }
-  }
-  // Clear hints on Alt+c.
-  if (message.action === "REMOVE_HINTS") {
-    clearHints();
   }
 });
