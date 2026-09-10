@@ -13,17 +13,11 @@
  * instead of a reimplementation that could silently produce wrong
  * boxes.
  *
- * Requires (see index.html / test.html for the CDN <script> tag and
- * model download):
- *   1. OpenCV.js loaded as `cv` on window, e.g.:
- *      <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady()"></script>
- *   2. The YuNet ONNX model file, downloaded locally into your
- *      extension/app and served from a URL you pass to init():
+ * Requires the YuNet ONNX model file to be next to this file by default:
  *      https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
  *
  * Usage:
- *   await faceRedaction.init("./models/face_detection_yunet_2023mar.onnx");
- *   const redactedBase64 = await faceRedaction.run(base64Image);
+ *   const redactedBase64 = await faceRedaction(base64Image);
  *
  * `base64Image` may be a raw base64 string OR a full data URL
  * (e.g. "data:image/png;base64,....").
@@ -35,6 +29,35 @@
   let detector = null;
   let modelBytesPromise = null;
   let cvReadyPromise = null;
+  let detectorPromise = null;
+
+  const openCvUrl = "https://docs.opencv.org/4.x/opencv.js";
+  const scriptUrl =
+    typeof document !== "undefined" && document.currentScript
+      ? document.currentScript.src
+      : "";
+  const scriptDirectory = scriptUrl
+    ? scriptUrl.slice(0, scriptUrl.lastIndexOf("/") + 1)
+    : "./";
+  const defaultModelUrl = `${scriptDirectory}face_detection_yunet_2023mar.onnx`;
+
+  function loadOpenCvScript() {
+    if (typeof cv !== "undefined") return;
+
+    if (typeof document === "undefined") {
+      throw new Error("faceRedaction requires a browser environment with document and canvas support.");
+    }
+
+    const existingScript = Array.from(document.scripts).find((script) =>
+      script.src.includes("opencv.js")
+    );
+    if (existingScript) return;
+
+    const script = document.createElement("script");
+    script.src = openCvUrl;
+    script.async = true;
+    document.head.appendChild(script);
+  }
 
   /**
    * Resolves once OpenCV.js has finished loading its WASM runtime.
@@ -44,21 +67,18 @@
   function waitForOpenCv() {
     if (!cvReadyPromise) {
       cvReadyPromise = new Promise((resolve, reject) => {
-        if (typeof cv === "undefined") {
-          reject(
-            new Error(
-              "OpenCV.js (`cv`) is not defined. Make sure the OpenCV.js " +
-                "<script> tag is included and has finished loading before " +
-                "calling faceRedaction.init()."
-            )
-          );
-          return;
-        }
-        if (cv.Mat) {
-          resolve();
-        } else {
-          cv["onRuntimeInitialized"] = () => resolve();
-        }
+        loadOpenCvScript();
+        const startedAt = Date.now();
+        const check = () => {
+          if (typeof cv !== "undefined" && cv.Mat) {
+            resolve();
+          } else if (Date.now() - startedAt > 30000) {
+            reject(new Error("OpenCV.js did not finish loading within 30 seconds."));
+          } else {
+            setTimeout(check, 50);
+          }
+        };
+        check();
       });
     }
     return cvReadyPromise;
@@ -93,10 +113,7 @@
    * @param {number} [options.nmsThreshold=0.3] - IoU threshold for non-max suppression.
    * @param {number} [options.topK=5000] - Max candidate boxes kept before NMS.
    */
-  async function init(modelUrl, options = {}) {
-    if (!modelUrl) {
-      throw new Error("faceRedaction.init: modelUrl is required.");
-    }
+  async function init(modelUrl = defaultModelUrl, options = {}) {
     const { scoreThreshold = 0.9, nmsThreshold = 0.3, topK = 5000 } = options;
 
     await waitForOpenCv();
@@ -105,6 +122,9 @@
     // Write the model into OpenCV.js's virtual filesystem so
     // FaceDetectorYN.create() (which takes a path, not raw bytes) can read it.
     const fsPath = "/yunet_model.onnx";
+    if (cv.FS_analyzePath(fsPath).exists) {
+      cv.FS_unlink(fsPath);
+    }
     cv.FS_createDataFile("/", "yunet_model.onnx", modelBytes, true, false, false);
 
     if (detector) {
@@ -148,12 +168,13 @@
 
   /**
    * Redacts (fully blacks out) all detected faces in the given base64
-   * image using OpenCV.js's YuNet detector. Call init() once before
-   * using this.
+  * image using OpenCV.js's YuNet detector. OpenCV.js and the model are
+  * loaded automatically on the first call.
    *
    * @param {string} base64Image - Raw base64 string or data URL of the image.
    * @param {Object} [options]
    * @param {number} [options.padding=0] - Extra pixels to expand each face box by.
+  * @param {string} [options.modelUrl] - Optional override for the adjacent ONNX model.
    * @param {string} [options.outputMimeType="image/png"] - MIME type for the output image.
    * @param {number} [options.outputQuality=0.92] - Quality for lossy formats (e.g. image/jpeg).
    * @returns {Promise<string>} Base64 (or data URL, matching input format) of the redacted image.
@@ -163,12 +184,20 @@
       throw new Error("faceRedaction.run: base64Image must be a non-empty string.");
     }
     if (!detector) {
-      throw new Error(
-        "faceRedaction.run: call faceRedaction.init(modelUrl) once before run()."
-      );
+      if (!detectorPromise) {
+        detectorPromise = init(options.modelUrl, options).catch((error) => {
+          detectorPromise = null;
+          throw error;
+        });
+      }
+      await detectorPromise;
     }
 
-    const { padding = 0, outputMimeType = "image/png", outputQuality = 0.92 } = options;
+    const {
+      padding = 0,
+      outputMimeType = "image/png",
+      outputQuality = 0.92,
+    } = options;
     const { prefix } = splitDataUrl(base64Image);
     const isDataUrl = prefix !== "";
 
@@ -218,7 +247,12 @@
     return isDataUrl ? dataUrl : dataUrl.split(",")[1];
   }
 
-  const faceRedaction = { init, run };
+  function faceRedaction(base64Image, options) {
+    return run(base64Image, options);
+  }
+
+  faceRedaction.init = init;
+  faceRedaction.run = run;
 
   // Expose globally (for plain <script> usage) and as a CommonJS export
   // (for bundlers), without assuming either environment.
