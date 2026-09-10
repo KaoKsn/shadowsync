@@ -1,0 +1,21 @@
+{
+  "name": "shadowsync-face-redaction",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test-images": "tsx scripts/test-images.ts"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.20.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "playwright": "^1.52.0",
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2",
+    "vite": "^6.0.5"
+  }
+}
