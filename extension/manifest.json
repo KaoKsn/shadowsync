@@ -14,10 +14,22 @@
       "description": "Capture DOM and screenshot to for LLM agent"
     }
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["face_detection_yunet_2023mar.onnx"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["html2canvas.min.js", "redactor.js", "content.js"],
+      "js": [
+        "html2canvas.min.js",
+        "redactor.js",
+        "opencv.js",
+        "faceRedaction.js",
+        "content.js"
+      ],
       "run_at": "document_end"
     }
   ],

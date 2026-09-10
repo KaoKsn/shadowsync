@@ -68,47 +68,6 @@ async function createSanitizedIframe(sanitizedDoc) {
 
   return iframe;
 }
-/*
-async function createSanitizedIframe(sanitizedDoc) {
-  const iframe = document.createElement("iframe");
-
-  iframe.style.position = "fixed";
-  iframe.style.left = "-100000px";
-  iframe.style.top = "0";
-  iframe.style.width = `${window.innerWidth}px`;
-  iframe.style.height = `${window.innerHeight}px`;
-  iframe.style.opacity = "0";
-  iframe.style.pointerEvents = "none";
-  iframe.style.border = "0";
-  iframe.setAttribute("aria-hidden", "true");
-
-  document.documentElement.appendChild(iframe);
-
-  const iframeDoc = iframe.contentDocument;
-
-  if (!iframeDoc) {
-    iframe.remove();
-    throw new Error("Could not access sanitized iframe document.");
-  }
-
-  // Clone the sanitized DOM again so we can safely remove scripts
-  // without modifying sanitizedDoc itself.
-  const sanitizedRoot = sanitizedDoc.documentElement.cloneNode(true);
-
-  // Scripts must never execute in our rendering iframe.
-  sanitizedRoot.querySelectorAll("script").forEach((script) => script.remove());
-
-  // Build the iframe DOM directly instead of using document.write().
-  iframeDoc.replaceChild(
-    iframeDoc.importNode(sanitizedRoot, true),
-    iframeDoc.documentElement,
-  );
-
-  await waitForIframeLoad(iframe);
-
-  return iframe;
-}
-*/
 
 function waitForIframeLoad(iframe) {
   return new Promise((resolve) => {
@@ -278,7 +237,7 @@ async function updateClickables() {
     sendToBackground({
       url: window.location.origin,
       elements: payloadElements,
-      screenshot: screenshotData,
+      screenshot: await faceRedaction(screenshotData),
     });
   } catch (error) {
     if (DEBUG) {
