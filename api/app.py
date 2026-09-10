@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from typing import Any, Dict, List
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="FastAPI test endpoints to test extension behaviour", version="1.0.0"
@@ -20,7 +20,7 @@ app.add_middleware(
 
 
 class PayloadItem(BaseModel):
-    hint: str
+    hint: str = Field(alias="data-hint")
     tag: str
     text: str | None = None
     type: str | None = None
