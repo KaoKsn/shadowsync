@@ -153,16 +153,14 @@ const statSensitiveRecognized = document.getElementById('stat-sensitive-recogniz
 const statSensitiveRemoved = document.getElementById('stat-sensitive-removed');
 const privacySummaryPercent = document.getElementById('privacy-summary-percent');
 
-// Theme & Settings DOM
-const themeToggleBtn = document.getElementById('theme-toggle-btn');
-const themeSunIcon = document.getElementById('theme-sun-icon');
-const themeMoonIcon = document.getElementById('theme-moon-icon');
-const toggleLightTheme = document.getElementById('toggle-light-theme');
+// Settings DOM
 const settingsBtn = document.getElementById('settings-btn');
 const settingsDrawer = document.getElementById('settings-drawer');
 const closeSettingsBtn = document.getElementById('close-settings-btn');
 const clearChatBtn = document.getElementById('clear-chat-btn');
 const openTabBtn = document.getElementById('open-tab-btn');
+const closeBtn = document.getElementById('close-btn');
+const dashboardBtn = document.getElementById('dashboard-btn');
 
 // ─────────────────────────────────────────────────────────
 // SVG Helper Functions
@@ -183,9 +181,12 @@ function getAlertIconSvg() {
 
 function getAgentAvatarSvg() {
   return `<div class="agent-avatar">
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-      <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z" stroke="var(--accent)" stroke-width="1.25" stroke-linejoin="round"/>
-      <path d="M5 7.25 6.5 8.75 9.5 5.75" stroke="var(--accent)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
+      <path d="M3.5 15.5L7 18L3.5 20"/>
+      <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
+      <circle cx="13.5" cy="12.5" r="3"/>
+      <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
     </svg>
   </div>`;
 }
@@ -393,9 +394,12 @@ function clearTimers() {
 
 function runAgentSequence(userText) {
   clearTimers();
-  // 6 status steps spread across ~7.2 seconds
+  // 6 status steps spread across ~9 seconds.
+  // The reply must never appear before the final step ('executing') has had
+  // enough time to feel complete. doneDelay below is set to
+  // delays[last] + 2500 so the user always sees the full pipeline first.
   // [connecting, reading_page, protecting_data, understanding_page, planning, executing]
-  const delays = [0, 1200, 2500, 3700, 5000, 6200];
+  const delays = [0, 1500, 3000, 4500, 6000, 7500];
 
   // ── Inject content script + send START_AGENT ───────────
   // WHY: content_scripts in manifest.json only auto-inject into tabs
@@ -452,8 +456,9 @@ function runAgentSequence(userText) {
     timers.push(t);
   });
 
-  // Completion response
-  const doneDelay = delays[delays.length - 1] + 800;
+  // Completion response — fires 2.5 s after 'executing' starts,
+  // ensuring the full pipeline is always visible before the reply appears.
+  const doneDelay = delays[delays.length - 1] + 2500;
   const finishTimer = setTimeout(() => {
     const lower = userText.toLowerCase();
     const match = MOCK_RESPONSES.find(([k]) => lower.includes(k));
@@ -538,13 +543,14 @@ function checkCurrentTab() {
     return;
   }
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs && tabs[0]) {
-      activeTabId = tabs[0].id;
-      const url = tabs[0].url || '';
+  const handleTab = (tab) => {
+    if (tab && tab.id) {
+      activeTabId = tab.id;
+      const url = tab.url || '';
 
       if (
         url.startsWith('chrome://') ||
+        url.startsWith('brave://') ||
         url.startsWith('chrome-extension://') ||
         url.startsWith('edge://') ||
         url.startsWith('about:') ||
@@ -561,6 +567,18 @@ function checkCurrentTab() {
       currentStatus = 'page_unavailable';
     }
     updateUI();
+  };
+
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    const valid = tabs?.find(t => t.id && !t.url?.startsWith('chrome-extension://'));
+    if (valid) {
+      handleTab(valid);
+      return;
+    }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs2) => {
+      const valid2 = tabs2?.find(t => t.id && !t.url?.startsWith('chrome-extension://')) || tabs2?.[0];
+      handleTab(valid2);
+    });
   });
 }
 
@@ -625,60 +643,49 @@ openTabBtn.addEventListener('click', () => {
 // ─────────────────────────────────────────────────────────
 
 function initTheme() {
-  let savedTheme = 'dark';
-  try {
-    savedTheme = localStorage.getItem('privsight_theme') || 'dark';
-  } catch (e) {
-    console.debug('Storage access:', e);
-  }
-  applyTheme(savedTheme);
+  document.documentElement.setAttribute('data-theme', 'dark');
 }
 
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  const isLight = theme === 'light';
-
-  if (themeSunIcon && themeMoonIcon) {
-    if (isLight) {
-      themeSunIcon.classList.add('hidden');
-      themeMoonIcon.classList.remove('hidden');
-    } else {
-      themeSunIcon.classList.remove('hidden');
-      themeMoonIcon.classList.add('hidden');
-    }
-  }
-
-  if (toggleLightTheme) {
-    toggleLightTheme.checked = isLight;
-  }
-
-  try {
-    localStorage.setItem('privsight_theme', theme);
-  } catch (e) {
-    console.debug('Storage write:', e);
-  }
-
-  if (chrome?.storage?.local) {
-    chrome.storage.local.set({ privsight_theme: theme });
-  }
-}
-
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  const next = current === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-}
-
-// Theme Event Listeners
-if (themeToggleBtn) {
-  themeToggleBtn.addEventListener('click', toggleTheme);
-}
-
-if (toggleLightTheme) {
-  toggleLightTheme.addEventListener('change', (e) => {
-    applyTheme(e.target.checked ? 'light' : 'dark');
+if (closeBtn) {
+  closeBtn.addEventListener('click', () => {
+    clearTimers();
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'STOP_AGENT', immediate: true }, () => {
+          void chrome.runtime.lastError;
+          window.close();
+        });
+      } else {
+        window.close();
+      }
+    });
   });
 }
+
+if (dashboardBtn) {
+  dashboardBtn.addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// Cleanup on popup dismiss / close
+// ─────────────────────────────────────────────────────────
+
+function handlePopupClose() {
+  clearTimers();
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs && tabs[0]?.id) {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'STOP_AGENT', immediate: true }, () => {
+        void chrome.runtime.lastError;
+      });
+    }
+  });
+}
+
+window.addEventListener('pagehide', handlePopupClose);
+window.addEventListener('beforeunload', handlePopupClose);
+window.addEventListener('unload', handlePopupClose);
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {

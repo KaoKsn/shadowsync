@@ -30,6 +30,11 @@
 (function () {
   'use strict';
 
+  if (window.__PRIVSIGHT_AGENT_INJECTED__) {
+    return;
+  }
+  window.__PRIVSIGHT_AGENT_INJECTED__ = true;
+
   // ─── State ─────────────────────────────────────────────
   let overlayRoot = null;
   let agentTimer  = null;
@@ -64,39 +69,42 @@
     .aurora-edge {
       position: absolute;
       pointer-events: none;
+      z-index: 10;
     }
 
     /* Top edge */
     .aurora-top {
       top: 0; left: 0; right: 0;
-      height: 3px;
+      height: 3.5px;
       background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.0)   8%,
-        rgba(56, 189, 248, 0.75) 30%,
-        rgba(99, 210, 255, 0.95) 50%,
-        rgba(56, 189, 248, 0.75) 70%,
-        rgba(56, 189, 248, 0.0)  92%,
+        rgba(56, 189, 248, 0.0)   5%,
+        rgba(56, 189, 248, 0.8)  25%,
+        rgba(99, 210, 255, 1.0)  50%,
+        rgba(56, 189, 248, 0.8)  75%,
+        rgba(56, 189, 248, 0.0)  95%,
         transparent 100%
       );
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.65);
       animation: aurora-h 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
 
     /* Bottom edge */
     .aurora-bottom {
       bottom: 0; left: 0; right: 0;
-      height: 3px;
+      height: 3.5px;
       background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.0)   8%,
-        rgba(56, 189, 248, 0.65) 35%,
-        rgba(125, 211, 252, 0.90) 50%,
-        rgba(56, 189, 248, 0.65) 65%,
-        rgba(56, 189, 248, 0.0)  92%,
+        rgba(56, 189, 248, 0.0)   5%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.95) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.0)  95%,
         transparent 100%
       );
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.65);
       animation: aurora-h 4.1s cubic-bezier(0.4, 0, 0.6, 1) infinite reverse;
       animation-delay: -1.3s;
     }
@@ -104,17 +112,18 @@
     /* Left edge */
     .aurora-left {
       left: 0; top: 0; bottom: 0;
-      width: 3px;
+      width: 3.5px;
       background: linear-gradient(
         180deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.0)  10%,
-        rgba(56, 189, 248, 0.7)  35%,
-        rgba(125, 211, 252, 0.9) 50%,
-        rgba(56, 189, 248, 0.7)  65%,
-        rgba(56, 189, 248, 0.0)  90%,
+        rgba(56, 189, 248, 0.0)  5%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.95) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.0)  95%,
         transparent 100%
       );
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.65);
       animation: aurora-v 3.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
       animation-delay: -0.8s;
     }
@@ -122,17 +131,18 @@
     /* Right edge */
     .aurora-right {
       right: 0; top: 0; bottom: 0;
-      width: 3px;
+      width: 3.5px;
       background: linear-gradient(
         180deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.0)  10%,
-        rgba(56, 189, 248, 0.65) 35%,
-        rgba(99, 210, 255, 0.88) 50%,
-        rgba(56, 189, 248, 0.65) 65%,
-        rgba(56, 189, 248, 0.0)  90%,
+        rgba(56, 189, 248, 0.0)  5%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(99, 210, 255, 0.95) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.0)  95%,
         transparent 100%
       );
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.65);
       animation: aurora-v 4.6s cubic-bezier(0.4, 0, 0.6, 1) infinite reverse;
       animation-delay: -2.1s;
     }
@@ -178,7 +188,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       animation: logo-rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
       animation-delay: 0.15s;
     }
@@ -190,8 +200,8 @@
 
     .logo-halo {
       position: relative;
-      width: 56px;
-      height: 56px;
+      width: 76px;
+      height: 76px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -200,18 +210,18 @@
     .logo-halo::before {
       content: '';
       position: absolute;
-      inset: -18px;
+      inset: -24px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.22) 0%, transparent 72%);
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, transparent 72%);
       animation: halo-pulse 2.2s ease-in-out infinite;
     }
 
     .logo-halo::after {
       content: '';
       position: absolute;
-      inset: -8px;
+      inset: -12px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.12) 0%, transparent 70%);
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, transparent 70%);
       animation: halo-pulse 2.2s ease-in-out infinite;
       animation-delay: 0.5s;
     }
@@ -222,36 +232,37 @@
     }
 
     .logo-icon-wrap {
-      width: 48px;
-      height: 48px;
-      border-radius: 14px;
-      background: rgba(10, 12, 18, 0.75);
-      border: 1px solid rgba(56, 189, 248, 0.35);
+      width: 66px;
+      height: 66px;
+      border-radius: 18px;
+      background: rgba(10, 12, 18, 0.82);
+      border: 1.5px solid rgba(56, 189, 248, 0.45);
       display: flex;
       align-items: center;
       justify-content: center;
       position: relative;
       z-index: 1;
       box-shadow:
-        0 0 0 1px rgba(56, 189, 248, 0.10),
-        0 4px 24px rgba(0, 0, 0, 0.45),
-        inset 0 1px 0 rgba(56, 189, 248, 0.12);
+        0 0 0 1px rgba(56, 189, 248, 0.14),
+        0 8px 32px rgba(0, 0, 0, 0.6),
+        0 0 24px rgba(56, 189, 248, 0.20),
+        inset 0 1px 0 rgba(56, 189, 248, 0.20);
       animation: icon-pulse 2.2s ease-in-out infinite;
     }
 
     @keyframes icon-pulse {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(56,189,248,0.10), 0 4px 24px rgba(0,0,0,0.45), 0 0 18px rgba(56,189,248,0.08); }
-      50%       { box-shadow: 0 0 0 1px rgba(56,189,248,0.28), 0 4px 24px rgba(0,0,0,0.45), 0 0 32px rgba(56,189,248,0.22); }
+      0%, 100% { box-shadow: 0 0 0 1px rgba(56,189,248,0.14), 0 8px 32px rgba(0,0,0,0.6), 0 0 24px rgba(56,189,248,0.14); }
+      50%       { box-shadow: 0 0 0 1px rgba(56,189,248,0.35), 0 8px 32px rgba(0,0,0,0.6), 0 0 38px rgba(56,189,248,0.30); }
     }
 
     .logo-label {
-      font-size: 11px;
-      font-weight: 500;
-      color: rgba(186, 230, 253, 0.75);
-      letter-spacing: 0.14em;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(186, 230, 253, 0.95);
+      letter-spacing: 0.16em;
       text-transform: uppercase;
       animation: label-breathe 2.4s ease-in-out infinite;
-      text-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
+      text-shadow: 0 0 16px rgba(56, 189, 248, 0.7);
     }
 
     @keyframes label-breathe {
@@ -273,7 +284,8 @@
 
     /* ── Fade-out transition ───────────────────────────── */
     .privsight-shell.leaving {
-      animation: overlay-out 0.5s ease-in both;
+      animation: overlay-out 0.4s ease-in both;
+      pointer-events: none !important;
     }
 
     @keyframes overlay-out {
@@ -304,8 +316,12 @@
       position:      'fixed',
       top:           '0',
       left:          '0',
+      right:         '0',
+      bottom:        '0',
       width:         '100vw',
       height:        '100vh',
+      margin:        '0',
+      padding:       '0',
       zIndex:        '2147483647',
       pointerEvents: 'all',
       overflow:      'hidden',
@@ -353,15 +369,12 @@
     logoCenter.innerHTML = `
       <div class="logo-halo">
         <div class="logo-icon-wrap">
-          <svg width="24" height="24" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path
-              d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z"
-              stroke="rgba(56,189,248,0.95)" stroke-width="1.2" stroke-linejoin="round"
-            />
-            <path
-              d="M5 7.25 6.5 8.75 9.5 5.75"
-              stroke="rgba(56,189,248,0.95)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
-            />
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="rgba(56,189,248,0.95)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
+            <path d="M3.5 15.5L7 18L3.5 20"/>
+            <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
+            <circle cx="13.5" cy="12.5" r="3"/>
+            <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
           </svg>
         </div>
       </div>
@@ -383,10 +396,18 @@
   }
 
   // ─── Remove Overlay (with fade-out) ────────────────────
-  function removeOverlay() {
-    if (!isActive || !overlayRoot) return;
+  function removeOverlay(immediate = false) {
+    if (!overlayRoot) return;
 
     const { host, shell } = overlayRoot;
+    isActive = false;
+
+    if (immediate) {
+      if (host.parentNode) host.parentNode.removeChild(host);
+      overlayRoot = null;
+      console.log('[PrivSight] Overlay removed immediately.');
+      return;
+    }
 
     // Trigger the fade-out CSS animation first
     shell.classList.add('leaving');
@@ -395,9 +416,8 @@
     setTimeout(() => {
       if (host.parentNode) host.parentNode.removeChild(host);
       overlayRoot = null;
-      isActive    = false;
       console.log('[PrivSight] Overlay removed — page restored.');
-    }, 520);
+    }, 420);
   }
 
   // ─── Message Handler ────────────────────────────────────
@@ -420,7 +440,7 @@
     if (message.type === 'STOP_AGENT') {
       console.log('[PrivSight] Agent stopped.');
       clearTimeout(agentTimer);
-      removeOverlay();
+      removeOverlay(message.immediate || false);
       sendResponse({ ok: true, status: 'overlay_removed' });
     }
 

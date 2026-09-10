@@ -25,6 +25,13 @@
   // STATE
   // ══════════════════════════════════════════════════════════════
   let activeTabId = null;
+  let sessionPort = null;
+
+  try {
+    sessionPort = chrome.runtime.connect({ name: 'privsight-sidepanel' });
+  } catch (e) {
+    console.debug('[PrivSight] Port connect:', e);
+  }
 
   /**
    * currentStatus — tracks the agent's lifecycle stage.
@@ -46,6 +53,9 @@
 
   /** Active simulation timers (so they can be cleared on stopAgent) */
   let timers = [];
+
+  /** Active session managed by AgentSessionManager in localStorage */
+  let activeSession = null;
 
   // ── Status metadata ─────────────────────────────────────────
   const STATUS_META = {
@@ -70,9 +80,7 @@
     { id: 'execute',   label: 'Executing task',              status: 'executing'          },
   ];
 
-  // ── Simulation timing (ms) — replace with real backend events later ──
-  // Total ~10 seconds: [0, 2s, 4s, 6s, 8s, 9s, done at ~10s]
-  const SIMULATION_DELAYS = [0, 2000, 4000, 6000, 8000, 9000];
+
 
   // ── Simulated responses for demo mode ───────────────────────
   const MOCK_RESPONSES = [
@@ -93,11 +101,8 @@
     logo:            $('ps-logo'),
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
-    themeToggle:     $('ps-theme-toggle'),
     dashboardBtn:    $('ps-dashboard-btn'),
     closeBtn:        $('ps-close-btn'),
-    iconMoon:        $('ps-icon-moon'),
-    iconSun:         $('ps-icon-sun'),
     chat:            $('ps-chat'),
     idle:            $('ps-idle'),
     activity:        $('ps-activity'),
@@ -119,20 +124,7 @@
   // THEME MANAGEMENT
   // ══════════════════════════════════════════════════════════════
   function initTheme() {
-    const saved = localStorage.getItem('privsight-theme') || 'dark';
-    applyTheme(saved);
-  }
-
-  function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    el.iconMoon.style.display = theme === 'dark'  ? 'block' : 'none';
-    el.iconSun.style.display  = theme === 'light' ? 'block' : 'none';
-    localStorage.setItem('privsight-theme', theme);
-  }
-
-  function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme') || 'dark';
-    applyTheme(current === 'dark' ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', 'dark');
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -140,13 +132,33 @@
   // ══════════════════════════════════════════════════════════════
   async function resolveActiveTab() {
     return new Promise((resolve) => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs.length > 0) {
-          activeTabId = tabs[0].id;
-          resolve(tabs[0]);
-        } else {
-          resolve(null);
+      // 1. In Brave & Chrome side panels, the webpage tab belongs to lastFocusedWindow
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        const valid = tabs?.find(t => t.id && !t.url?.startsWith('chrome-extension://'));
+        if (valid) {
+          activeTabId = valid.id;
+          resolve(valid);
+          return;
         }
+        // 2. Fallback: currentWindow
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs2) => {
+          const valid2 = tabs2?.find(t => t.id && !t.url?.startsWith('chrome-extension://'));
+          if (valid2) {
+            activeTabId = valid2.id;
+            resolve(valid2);
+            return;
+          }
+          // 3. Global fallback across all windows
+          chrome.tabs.query({ active: true }, (tabs3) => {
+            const valid3 = tabs3?.find(t => t.id && !t.url?.startsWith('chrome-extension://')) || tabs3?.[0];
+            if (valid3 && valid3.id) {
+              activeTabId = valid3.id;
+              resolve(valid3);
+            } else {
+              resolve(null);
+            }
+          });
+        });
       });
     });
   }
@@ -163,7 +175,21 @@
   async function startAgent(prompt) {
     if (STATUS_META[currentStatus]?.working) return; // already running
 
-    await resolveActiveTab();
+    const tab = await resolveActiveTab();
+    let currentDomain = 'Unknown';
+    if (tab && tab.url) {
+      try {
+        currentDomain = new URL(tab.url).hostname || 'Unknown';
+      } catch (_) {}
+    }
+
+    // 1. Create unique agent session in localStorage
+    if (typeof AgentSessionManager !== 'undefined') {
+      activeSession = AgentSessionManager.createSession(prompt, {
+        tabId: activeTabId,
+        domain: currentDomain,
+      });
+    }
 
     // Add user message to chat
     addMessage('user', prompt);
@@ -175,8 +201,7 @@
     // Lock the webpage and show Aurora
     await lockPage();
 
-    // Run the simulation sequence
-    // TODO: Replace runSimulation() with real backend event stream
+    // Run the agent execution sequence
     runSimulation(prompt);
   }
 
@@ -186,6 +211,16 @@
    */
   async function stopAgent() {
     clearAllTimers();
+    if (activeSession && typeof AgentSessionManager !== 'undefined') {
+      AgentSessionManager.updateSession(activeSession.id, {
+        status: AgentSessionManager.SessionStatus.STOPPED,
+      });
+      AgentSessionManager.appendActionToSession(activeSession.id, {
+        type: 'user_stop',
+        description: 'Agent session manually stopped by user.',
+      });
+      activeSession = null;
+    }
     await unlockPage();
     updateAgentStatus('idle');
     renderActivity(null);
@@ -205,8 +240,8 @@
     el.statusText.textContent = meta.label;
     el.statusDot.className    = `ps-status-dot ${meta.dotClass}`;
 
-    // Header working accent line
-    el.header.className = `ps-header ${meta.working ? 'working' : status === 'completed' ? 'completed' : ''}`;
+    // Header working accent line (guard: ps-header may not exist)
+    if (el.header) el.header.className = `ps-header ${meta.working ? 'working' : status === 'completed' ? 'completed' : ''}`;
 
     // Logo pulse
     el.logo.className   = `ps-logo ${meta.working ? 'working' : ''}`;
@@ -248,24 +283,63 @@
    * In production: also pass sanitized context to the backend.
    */
   async function lockPage() {
-    if (!activeTabId) return;
+    let tab = activeTabId ? { id: activeTabId } : await resolveActiveTab();
+    if (!tab?.id) {
+      tab = await resolveActiveTab();
+    }
+    if (!tab?.id) {
+      console.warn('[PrivSight] Cannot lock page: no active tab found.');
+      return;
+    }
+    activeTabId = tab.id;
+    const targetId = activeTabId;
+
+    if (tab.url && (
+      tab.url.startsWith('chrome://') ||
+      tab.url.startsWith('brave://') ||
+      tab.url.startsWith('edge://') ||
+      tab.url.startsWith('about:') ||
+      tab.url.startsWith('chrome-extension://')
+    )) {
+      console.info('[PrivSight] Cannot inject into internal browser page:', tab.url);
+      return;
+    }
+
     return new Promise((resolve) => {
-      chrome.scripting.executeScript(
-        { target: { tabId: activeTabId }, files: ['content/agent.js'] },
-        () => {
-          if (chrome.runtime.lastError) {
-            console.warn('[PrivSight] Inject failed:', chrome.runtime.lastError.message);
-            resolve();
-            return;
+      // Step A: Attempt direct message (works if agent.js is already running via content_scripts)
+      chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, (response) => {
+        if (!chrome.runtime.lastError && response?.ok) {
+          if (sessionPort) {
+            sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
           }
-          chrome.tabs.sendMessage(activeTabId, { type: 'START_AGENT' }, () => {
-            if (chrome.runtime.lastError) {
-              console.debug('[PrivSight] START_AGENT:', chrome.runtime.lastError.message);
-            }
-            resolve();
-          });
+          resolve();
+          return;
         }
-      );
+
+        // Step B: If not listening yet, dynamically inject agent.js then send START_AGENT
+        if (chrome?.scripting?.executeScript) {
+          chrome.scripting.executeScript(
+            { target: { tabId: targetId }, files: ['content/agent.js'] },
+            () => {
+              if (chrome.runtime.lastError) {
+                console.warn('[PrivSight] Script inject note:', chrome.runtime.lastError.message);
+              }
+              // Always attempt to send message after injection
+              chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, () => {
+                if (chrome.runtime.lastError) {
+                  console.debug('[PrivSight] START_AGENT retry:', chrome.runtime.lastError.message);
+                }
+                if (sessionPort) {
+                  sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
+                }
+                resolve();
+              });
+            }
+          );
+        } else {
+          resolve();
+        }
+      });
     });
   }
 
@@ -275,9 +349,17 @@
    * and restoring normal page interaction.
    */
   async function unlockPage() {
-    if (!activeTabId) return;
+    if (sessionPort) {
+      sessionPort.postMessage({ type: 'AGENT_IDLE' });
+    }
+    let targetId = activeTabId;
+    if (!targetId) {
+      const tab = await resolveActiveTab();
+      targetId = tab?.id;
+    }
+    if (!targetId) return;
     return new Promise((resolve) => {
-      chrome.tabs.sendMessage(activeTabId, { type: 'STOP_AGENT' }, () => {
+      chrome.tabs.sendMessage(targetId, { type: 'STOP_AGENT', immediate: true }, () => {
         if (chrome.runtime.lastError) {
           console.debug('[PrivSight] STOP_AGENT:', chrome.runtime.lastError.message);
         }
@@ -321,17 +403,28 @@
 
   // ══════════════════════════════════════════════════════════════
   // SIMULATION ENGINE
-  // Replace this entire function with real backend integration.
-  // The function signature and the calls it makes to the public
-  // interface above should remain identical.
+  // Sequential async pipeline — each stage waits for the previous.
+  // GUARANTEED ORDER:
+  //   1. Aurora appears (lockPage done before runSimulation is called)
+  //   2. Checklist steps tick through one by one while aurora stays
+  //   3. All steps complete → reply is added to chat
+  //   4. Aurora closes AFTER reply is visible
+  //   5. Status → completed, then idle after 4s
   // ══════════════════════════════════════════════════════════════
-  function runSimulation(prompt) {
+
+
+  async function runSimulation(prompt) {
+    const cancel = { cancelled: false };
+
     const sequence = [
-      'connecting', 'reading_page', 'protecting_data',
-      'understanding_page', 'planning', 'executing',
+      { status: 'connecting',         duration: 1600 },
+      { status: 'reading_page',       duration: 1800 },
+      { status: 'protecting_data',    duration: 2000 },
+      { status: 'understanding_page', duration: 1800 },
+      { status: 'planning',           duration: 1600 },
+      { status: 'executing',          duration: 2200 },
     ];
 
-    // Stat increments per stage
     const statIncrements = [
       { dataFound: 412,  sensitiveRecognized: 0,  sensitiveRemoved: 0  },
       { dataFound: 938,  sensitiveRecognized: 0,  sensitiveRemoved: 0  },
@@ -341,87 +434,136 @@
       { dataFound: 0,    sensitiveRecognized: 0,  sensitiveRemoved: 0  },
     ];
 
-    // Show activity log
-    renderActivity(sequence[0]);
+    // ── PHASE 1: Step through the checklist ───────────────
+    // Aurora is already live. Each step waits its full duration
+    // before the next one begins — no overlapping timeouts.
+    for (let i = 0; i < sequence.length; i++) {
+      if (cancel.cancelled) return;
 
-    sequence.forEach((status, i) => {
-      const t = setTimeout(() => {
-        updateAgentStatus(status);
-        renderActivity(status);
+      const { status, duration } = sequence[i];
+      updateAgentStatus(status);
+      renderActivity(status);
 
-        // Accumulate stats
-        const inc = statIncrements[i];
-        updatePrivacyStats({
-          dataFound:           stats.dataFound           + inc.dataFound,
-          sensitiveRecognized: stats.sensitiveRecognized + inc.sensitiveRecognized,
-          sensitiveRemoved:    stats.sensitiveRemoved    + inc.sensitiveRemoved,
-        });
-      }, SIMULATION_DELAYS[i]);
+      const inc = statIncrements[i];
+      updatePrivacyStats({
+        dataFound:           stats.dataFound           + inc.dataFound,
+        sensitiveRecognized: stats.sensitiveRecognized + inc.sensitiveRecognized,
+        sensitiveRemoved:    stats.sensitiveRemoved    + inc.sensitiveRemoved,
+      });
+
+      // Trigger agent action / call backend placeholder & update localStorage session
+      if (activeSession && typeof AgentSessionManager !== 'undefined') {
+        try {
+          const agentAction = await AgentSessionManager.fetchAgentAction(activeSession, i, {
+            stats: { ...stats },
+          });
+
+          // Store agent action in session and update localStorage
+          AgentSessionManager.appendActionToSession(activeSession.id, {
+            stepIndex: i,
+            action: agentAction.action,
+            status: status,
+            description: agentAction.description,
+            stats: { ...stats },
+          });
+
+          // Update session status in localStorage
+          AgentSessionManager.updateSession(activeSession.id, {
+            status: status,
+          });
+        } catch (err) {
+          console.warn('[PrivSight Session] Action fetch notice:', err);
+        }
+      }
+
+      // Wait for this step to complete before advancing
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, duration);
+        timers.push(t);
+      });
+    }
+
+    if (cancel.cancelled) return;
+
+    // ── PHASE 2: Pause so user sees "Executing" finish ────
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, 1200);
       timers.push(t);
     });
 
-    // Completion — ~10 seconds total
-    const doneT = setTimeout(async () => {
-      stats.sensitiveRemoved = stats.sensitiveRecognized;
-      updatePrivacyStats({ ...stats });
+    if (cancel.cancelled) return;
 
-      // Find a matching mock response
-      const lower = prompt.toLowerCase();
-      const match = MOCK_RESPONSES.find(([k]) => lower.includes(k));
-      const reply = match
-        ? match[1]
-        : 'Done. I\'ve completed the task on this page while keeping your sensitive information protected throughout.';
+    // ── PHASE 3: Finalize stats ───────────────────────────
+    stats.sensitiveRemoved = stats.sensitiveRecognized;
+    updatePrivacyStats({ ...stats });
 
-      addMessage('agent', reply);
-      updateAgentStatus('completed');
-      renderActivity(null); // hide activity log
+    // ── PHASE 4: Show the reply (aurora still active) ─────
+    const lower = prompt.toLowerCase();
+    const match = MOCK_RESPONSES.find(([k]) => lower.includes(k));
+    const reply = match
+      ? match[1]
+      : "Done. I've completed the task on this page while keeping your sensitive information protected throughout.";
 
-      // Unlock the page
-      unlockPage();
+    addMessage('agent', reply);
+    updateAgentStatus('completed');
+    renderActivity(null);
 
-      // ── Persist session to storage for the Dashboard ──
-      // Resolve the current tab domain
-      let domain = 'Unknown';
-      try {
-        const tabs = await new Promise(r => chrome.tabs.query({ active: true, currentWindow: true }, r));
-        if (tabs && tabs[0] && tabs[0].url) {
-          domain = new URL(tabs[0].url).hostname || 'Unknown';
-        }
-      } catch (_) {}
-
-      // Build per-type breakdown (simulated)
-      const totalSensitive = stats.sensitiveRecognized;
-      const breakdown = {
-        email:      Math.round(totalSensitive * 0.35),
-        phone:      Math.round(totalSensitive * 0.20),
-        creditCard: Math.round(totalSensitive * 0.15),
-        ssn:        Math.round(totalSensitive * 0.10),
-        password:   Math.round(totalSensitive * 0.12),
-        other:      totalSensitive - Math.round(totalSensitive * 0.92),
-      };
-
-      await persistSession({
-        id:                  Date.now(),
-        timestamp:           new Date().toISOString(),
-        domain,
-        prompt,
-        dataFound:           stats.dataFound,
-        sensitiveRecognized: stats.sensitiveRecognized,
-        sensitiveRemoved:    stats.sensitiveRemoved,
-        protectionRate:      stats.sensitiveRecognized > 0
-                               ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
-                               : 100,
-        breakdown,
+    // Record completed state & reply action in session localStorage
+    if (activeSession && typeof AgentSessionManager !== 'undefined') {
+      AgentSessionManager.appendActionToSession(activeSession.id, {
+        type: 'agent_response',
+        reply: reply,
+        isFinal: true,
+        stats: { ...stats },
       });
+      AgentSessionManager.updateSession(activeSession.id, {
+        status: AgentSessionManager.SessionStatus.COMPLETED,
+      });
+      activeSession = null;
+    }
 
-      // Return to idle after 4 seconds
-      const idleT = setTimeout(() => {
-        updateAgentStatus('idle');
-      }, 4000);
-      timers.push(idleT);
-    }, SIMULATION_DELAYS[sequence.length - 1] + 1200);
-    timers.push(doneT);
+    // ── PHASE 5: Close aurora AFTER reply is visible ──────
+    await unlockPage();
+
+    // ── PHASE 6: Persist to Dashboard storage ────────────
+    let domain = 'Unknown';
+    try {
+      const tab = await resolveActiveTab();
+      if (tab && tab.url) {
+        domain = new URL(tab.url).hostname || 'Unknown';
+      }
+    } catch (_) {}
+
+    const totalSensitive = stats.sensitiveRecognized;
+    const breakdown = {
+      email:      Math.round(totalSensitive * 0.35),
+      phone:      Math.round(totalSensitive * 0.20),
+      creditCard: Math.round(totalSensitive * 0.15),
+      ssn:        Math.round(totalSensitive * 0.10),
+      password:   Math.round(totalSensitive * 0.12),
+      other:      totalSensitive - Math.round(totalSensitive * 0.92),
+    };
+
+    await persistSession({
+      id:                  Date.now(),
+      timestamp:           new Date().toISOString(),
+      domain,
+      prompt,
+      dataFound:           stats.dataFound,
+      sensitiveRecognized: stats.sensitiveRecognized,
+      sensitiveRemoved:    stats.sensitiveRemoved,
+      protectionRate:      stats.sensitiveRecognized > 0
+                             ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
+                             : 100,
+      breakdown,
+    });
+
+    // ── PHASE 7: Return to idle ───────────────────────────
+    const idleT = setTimeout(() => updateAgentStatus('idle'), 4000);
+    timers.push(idleT);
   }
+
+
 
   // ══════════════════════════════════════════════════════════════
   // UI RENDERING
@@ -561,15 +703,22 @@
   // INITIALISATION
   // ══════════════════════════════════════════════════════════════
   function init() {
+    // Session recovery on reload
+    if (typeof AgentSessionManager !== 'undefined') {
+      AgentSessionManager.handlePageRefreshRecovery();
+    }
+
     // Theme
     initTheme();
-    el.themeToggle.addEventListener('click', toggleTheme);
 
     // Dashboard button
     el.dashboardBtn.addEventListener('click', openDashboard);
 
     // Close panel
-    el.closeBtn.addEventListener('click', () => window.close());
+    el.closeBtn.addEventListener('click', async () => {
+      await stopAgent();
+      window.close();
+    });
 
     // Find the active tab right away
     resolveActiveTab();
@@ -597,6 +746,20 @@
 
     el.input.focus();
   }
+
+  // Cleanup on unload / close
+  function handlePanelClose() {
+    clearAllTimers();
+    if (activeTabId && chrome?.tabs?.sendMessage) {
+      chrome.tabs.sendMessage(activeTabId, { type: 'STOP_AGENT', immediate: true }, () => {
+        void chrome.runtime.lastError;
+      });
+    }
+  }
+
+  window.addEventListener('pagehide', handlePanelClose);
+  window.addEventListener('beforeunload', handlePanelClose);
+  window.addEventListener('unload', handlePanelClose);
 
   // Boot
   document.addEventListener('DOMContentLoaded', init);

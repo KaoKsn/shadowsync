@@ -12,9 +12,7 @@
 </head>
 <body>
 
-  <!-- Liquid glass cursor -->
-  <div id="db-cursor" aria-hidden="true"></div>
-  <div id="db-cursor-trail" aria-hidden="true"></div>
+
 
   <!-- ══════════════════════════════════════════════════════
        TOPBAR
@@ -23,11 +21,12 @@
     <div class="db-topbar__inner">
       <div class="db-topbar__brand">
         <div class="db-brand-logo" id="db-brand-logo">
-          <svg width="18" height="18" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z"
-                  stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-            <path d="M5 7.25 6.5 8.75 9.5 5.75"
-                  stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
+            <path d="M3.5 15.5L7 18L3.5 20"/>
+            <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
+            <circle cx="13.5" cy="12.5" r="3"/>
+            <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
           </svg>
         </div>
         <span class="db-brand-name">PrivSight</span>
@@ -41,18 +40,6 @@
         <button class="db-btn db-btn--ghost" id="db-export-btn" title="Export history as CSV">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export CSV
-        </button>
-
-        <button class="db-icon-btn" id="db-theme-toggle" title="Toggle theme" aria-label="Toggle theme">
-          <svg id="db-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-          </svg>
-          <svg id="db-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
-            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-          </svg>
         </button>
       </div>
     </div>
@@ -104,12 +91,13 @@
     <!-- Empty state -->
     <div class="db-empty" id="db-empty" style="display:none;">
       <div class="db-empty__icon">
-        <svg width="36" height="36" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M7 1.25 2.25 3v4.25C2.25 10.25 4.5 12.25 7 13.25c2.5-1 4.75-3 4.75-6V3L7 1.25Z"
-                stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
-          <path d="M5 7.25 6.5 8.75 9.5 5.75"
-                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
+            <path d="M3.5 15.5L7 18L3.5 20"/>
+            <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
+            <circle cx="13.5" cy="12.5" r="3"/>
+            <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
+          </svg>
       </div>
       <h2 class="db-empty__title">No sessions yet</h2>
       <p class="db-empty__sub">Run your first PrivSight task in the side panel.<br>Your privacy analytics will appear here.</p>
@@ -120,31 +108,6 @@
 
       <!-- Left column -->
       <div class="db-col db-col--left">
-
-        <!-- Protection Trend Chart -->
-        <section class="db-card" id="db-card-trend">
-          <div class="db-card__head">
-            <h2 class="db-card__title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-              Protection Rate Trend
-            </h2>
-            <span class="db-card__badge" id="db-trend-badge"></span>
-          </div>
-          <div class="db-chart-wrap" id="db-chart-wrap">
-            <svg class="db-chart" id="db-chart" aria-label="Protection rate trend chart" role="img">
-              <defs>
-                <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/>
-                  <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-          <div class="db-chart__legend">
-            <span class="db-legend-dot"></span>
-            <span>Protection % per session</span>
-          </div>
-        </section>
 
         <!-- Data Type Breakdown -->
         <section class="db-card" id="db-card-breakdown">

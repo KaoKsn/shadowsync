@@ -30,18 +30,19 @@
 
   /* Text */
   --t1:   #ffffff;
-  --t2:   rgba(255,255,255,0.65);
-  --t3:   rgba(255,255,255,0.35);
-  --t4:   rgba(255,255,255,0.18);
+  --t2:   rgba(255,255,255,0.75);
+  --t3:   rgba(255,255,255,0.45);
+  --t4:   rgba(255,255,255,0.28);
 
-  /* Accent — pure white at different weights */
-  --accent:     #ffffff;
-  --accent-dim: rgba(255,255,255,0.08);
+  /* Accent — electric blue (matches extension popup) */
+  --accent:      #38bdf8;
+  --accent-dim:  rgba(56, 189, 248, 0.12);
+  --accent-glow: rgba(56, 189, 248, 0.25);
 
-  /* Status (desaturated for mono feel) */
-  --ok:   rgba(180,255,200,0.85);
-  --warn: rgba(255,220,130,0.85);
-  --err:  rgba(255,160,160,0.85);
+  /* Semantic status colors — green for protected, amber for caution, red for danger */
+  --ok:   #10b981;
+  --warn: #f59e0b;
+  --err:  #ef4444;
 
   --font: 'Inter', system-ui, -apple-system, sans-serif;
   --r-sm: 8px;
@@ -87,14 +88,13 @@ html { scroll-behavior: smooth; }
 
 body {
   font-family: var(--font);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--t1);
   background: var(--base);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
-  /* Hide default cursor so custom cursor takes over */
-  cursor: none;
+  cursor: auto;
 }
 
 /* ── Subtle grain overlay for depth ─────────────────────── */
@@ -110,90 +110,6 @@ body::before {
   opacity: 0.6;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   CURSOR — Minimal dot + lagging ring
-   Ring handles ALL state animation. Dot is always a sharp 4px point.
-   ══════════════════════════════════════════════════════════════ */
-
-/* Outer ring — lags, JS also applies velocity stretch via scaleX/Y */
-#db-cursor {
-  position: fixed;
-  top: 0; left: 0;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 9999;
-  will-change: transform;
-
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.45);
-
-  /* Smooth size transitions only — transform handled by JS */
-  transition:
-    width        0.35s cubic-bezier(0.16,1,0.3,1),
-    height       0.35s cubic-bezier(0.16,1,0.3,1),
-    border-color 0.25s ease,
-    border-width 0.25s ease,
-    opacity      0.2s  ease;
-}
-
-/* Sharp centre dot — follows mouse almost instantly */
-#db-cursor-trail {
-  position: fixed;
-  top: 0; left: 0;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 10000;
-  will-change: transform;
-  background: #fff;
-  /* No glow by default — keeps it pure */
-  transition: opacity 0.2s ease;
-}
-
-/* ── Hover — ring expands + brightens. Clean, no colour change. ── */
-body.db-cursor--hover #db-cursor {
-  width: 40px;
-  height: 40px;
-  border-color: rgba(255,255,255,0.80);
-}
-
-/* Dot hides on hover so ring feels like it “contains” the target */
-body.db-cursor--hover #db-cursor-trail {
-  opacity: 0;
-}
-
-/* ── Click — ring snaps in sharply ── */
-body.db-cursor--click #db-cursor {
-  width: 14px;
-  height: 14px;
-  border-color: rgba(255,255,255,1);
-  border-width: 1.5px;
-  transition-duration: 0.08s;
-}
-
-body.db-cursor--click #db-cursor-trail {
-  opacity: 1;
-}
-
-/* ── Ripple on click ── */
-.db-cursor-ripple {
-  position: fixed;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 9997;
-  width: 22px;
-  height: 22px;
-  border: 1px solid rgba(255,255,255,0.60);
-  animation: cursor-ripple 0.55s cubic-bezier(0.2,0,0.8,1) forwards;
-}
-
-@keyframes cursor-ripple {
-  0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.65; }
-  100% { transform: translate(-50%,-50%) scale(4.0); opacity: 0;    }
-}
 
 
 /* ══════════════════════════════════════════════════════════════
@@ -254,7 +170,7 @@ body.db-cursor--click #db-cursor-trail {
 }
 
 .db-brand-name {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--t1);
   letter-spacing: -0.025em;
@@ -263,7 +179,7 @@ body.db-cursor--click #db-cursor-trail {
 .db-brand-sep { color: var(--t4); font-size: 15px; font-weight: 300; }
 
 .db-brand-page {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--t3);
   font-weight: 400;
 }
@@ -286,7 +202,7 @@ body.db-cursor--click #db-cursor-trail {
   font-family: var(--font);
   font-size: 12px;
   font-weight: 500;
-  cursor: none;
+  cursor: auto;
   border: 1px solid var(--gb);
   background: var(--g2);
   color: var(--t2);
@@ -309,13 +225,15 @@ body.db-cursor--click #db-cursor-trail {
 }
 
 .db-btn--danger {
-  background: rgba(255,160,160,0.07);
-  color: var(--err);
-  border-color: rgba(255,160,160,0.18);
+  background: rgba(239, 68, 68, 0.10);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.28);
 }
 .db-btn--danger:hover {
-  background: rgba(255,160,160,0.13);
-  border-color: rgba(255,160,160,0.3);
+  background: rgba(239, 68, 68, 0.20);
+  border-color: rgba(239, 68, 68, 0.50);
+  color: #ffffff;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
 }
 
 .db-btn:active { transform: scale(0.97); }
@@ -327,7 +245,7 @@ body.db-cursor--click #db-cursor-trail {
   background: var(--g1);
   border: 1px solid var(--gb);
   color: var(--t3);
-  cursor: none;
+  cursor: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -418,20 +336,19 @@ body.db-cursor--click #db-cursor-trail {
 .db-hero__title-group { display: flex; flex-direction: column; gap: 7px; }
 
 .db-hero__title {
-  font-size: 30px;
+  font-size: 32px;
   font-weight: 800;
   letter-spacing: -0.04em;
   color: var(--t1);
-  /* Subtle gradient — warm white to cool white */
-  background: linear-gradient(160deg, #ffffff 0%, rgba(255,255,255,0.75) 100%);
+  background: linear-gradient(160deg, #ffffff 0%, rgba(255,255,255,0.80) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .db-hero__sub {
-  font-size: 13.5px;
-  color: var(--t3);
+  font-size: 14.5px;
+  color: var(--t2);
   font-weight: 400;
   letter-spacing: 0.01em;
 }
@@ -468,7 +385,7 @@ body.db-cursor--click #db-cursor-trail {
 }
 
 .db-hstat__num {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.04em;
   color: var(--t1);
@@ -478,19 +395,19 @@ body.db-cursor--click #db-cursor-trail {
 
 .db-hstat__num.animating { color: rgba(255,255,255,0.55); }
 
-.db-hstat__num--big { font-size: 32px; font-weight: 800; }
+.db-hstat__num--big { font-size: 34px; font-weight: 800; }
 
-/* Accent stat — slightly warmer white */
+/* Accent stat — electric blue */
 .db-hstat--accent .db-hstat__num {
-  background: linear-gradient(135deg, #ffffff 0%, rgba(255,255,255,0.7) 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, rgba(56,189,248,0.75) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .db-hstat__lbl {
-  font-size: 9.5px;
-  color: var(--t4);
+  font-size: 10.5px;
+  color: var(--t3);
   text-align: center;
   font-weight: 500;
   letter-spacing: 0.07em;
@@ -632,9 +549,9 @@ body.db-cursor--click #db-cursor-trail {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--t3);
+  color: var(--t2);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -681,8 +598,8 @@ body.db-cursor--click #db-cursor-trail {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.6);
-  box-shadow: 0 0 5px rgba(255,255,255,0.3);
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
   flex-shrink: 0;
 }
 
@@ -703,7 +620,7 @@ body.db-cursor--click #db-cursor-trail {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--t2);
+  color: var(--t1);
   font-weight: 500;
 }
 
@@ -772,13 +689,13 @@ body.db-cursor--click #db-cursor-trail {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.15);
 }
 
-.db-domain-rank--1 { background: rgba(255,215,80,0.10); border-color: rgba(255,215,80,0.25); color: #ffd750; }
-.db-domain-rank--2 { background: rgba(210,210,210,0.08); border-color: rgba(210,210,210,0.20); color: #d2d2d2; }
-.db-domain-rank--3 { background: rgba(195,130,80,0.10); border-color: rgba(195,130,80,0.22); color: #c38250; }
+.db-domain-rank--1 { background: rgba(56,189,248,0.18); border-color: rgba(56,189,248,0.40); color: #38bdf8; }
+.db-domain-rank--2 { background: rgba(56,189,248,0.12); border-color: rgba(56,189,248,0.25); color: #7dd3fc; }
+.db-domain-rank--3 { background: rgba(56,189,248,0.07); border-color: rgba(56,189,248,0.18); color: #bae6fd; }
 
 .db-domain-name {
   flex: 1;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--t1);
   overflow: hidden;
@@ -786,7 +703,7 @@ body.db-cursor--click #db-cursor-trail {
   white-space: nowrap;
 }
 
-.db-domain-count { font-size: 11px; color: var(--t4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.db-domain-count { font-size: 11.5px; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ══════════════════════════════════════════════════════════════
    TABLE
@@ -804,19 +721,19 @@ body.db-cursor--click #db-cursor-trail {
 .db-table-wrap::-webkit-scrollbar { height: 4px; }
 .db-table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
 
-.db-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.db-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .db-table thead { position: sticky; top: 0; z-index: 1; }
 
 .db-table th {
   background: rgba(255,255,255,0.04);
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
-  color: var(--t4);
+  color: var(--t3);
   font-weight: 600;
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  padding: 11px 16px;
+  padding: 12px 16px;
   text-align: left;
   border-bottom: 1px solid var(--gb);
   white-space: nowrap;
@@ -850,19 +767,19 @@ body.db-cursor--click #db-cursor-trail {
 }
 
 .db-rate-badge--high {
-  background: rgba(150,255,190,0.08);
+  background: rgba(16, 185, 129, 0.12);
   color: var(--ok);
-  border: 1px solid rgba(150,255,190,0.18);
+  border: 1px solid rgba(16, 185, 129, 0.28);
 }
 .db-rate-badge--med {
-  background: rgba(255,220,100,0.08);
+  background: rgba(245, 158, 11, 0.12);
   color: var(--warn);
-  border: 1px solid rgba(255,220,100,0.18);
+  border: 1px solid rgba(245, 158, 11, 0.28);
 }
 .db-rate-badge--low {
-  background: rgba(255,140,140,0.08);
+  background: rgba(239, 68, 68, 0.12);
   color: var(--err);
-  border: 1px solid rgba(255,140,140,0.18);
+  border: 1px solid rgba(239, 68, 68, 0.28);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -923,13 +840,13 @@ body.db-cursor--click #db-cursor-trail {
   width: 54px;
   height: 54px;
   border-radius: 16px;
-  background: rgba(255,220,100,0.08);
-  border: 1px solid rgba(255,220,100,0.22);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.30);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--warn);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 20px rgba(255,200,80,0.12);
+  color: #f87171;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 24px rgba(239, 68, 68, 0.20);
 }
 
 .db-modal__title {
@@ -961,20 +878,84 @@ body.db-cursor--click #db-cursor-trail {
 /* ══════════════════════════════════════════════════════════════
    RESPONSIVE
    ══════════════════════════════════════════════════════════════ */
-@media (max-width: 1100px) {
-  .db-grid { grid-template-columns: 1fr; }
-  .db-col--left { display: grid; grid-template-columns: 1fr 1fr; }
-  #db-card-trend { grid-column: 1 / -1; }
+
+/* ── ≤1200px: grid stacks, two-column left col ─────────── */
+@media (max-width: 1200px) {
+  .db-grid { grid-template-columns: 360px 1fr; }
 }
 
+/* ── ≤1100px: single column layout ─────────────────────── */
+@media (max-width: 1100px) {
+  .db-grid { grid-template-columns: 1fr; }
+  .db-col--left { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+}
+
+/* ── ≤900px: hero stats wrap to 2×2 grid ─────────────── */
+@media (max-width: 900px) {
+  .db-hero { padding: 32px 32px; }
+  .db-topbar__inner { padding: 0 24px; }
+  .db-main { padding: 24px 24px 60px; }
+  .db-hero__stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    padding: 18px 20px;
+  }
+  .db-hstat__div { display: none; }
+  .db-hstat {
+    padding: 10px 8px;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .db-hstat:nth-child(2n) { border-right: none; }
+  .db-hstat:nth-last-child(-n+2) { border-bottom: none; }
+  .db-hero__title { font-size: 26px; }
+}
+
+/* ── ≤700px: single column everything, compact padding ── */
 @media (max-width: 700px) {
   .db-main { padding: 16px 16px 50px; }
-  .db-topbar__inner { padding: 0 16px; }
-  .db-hero { padding: 26px 24px; }
-  .db-hero__stats { padding: 16px 18px; }
-  .db-hstat { min-width: 80px; }
-  .db-hstat__div { display: none; }
+  .db-topbar__inner { padding: 0 16px; height: 48px; }
+  .db-hero { padding: 24px 20px; border-radius: var(--r-xl); }
+  .db-hero__stats {
+    grid-template-columns: 1fr 1fr;
+    padding: 14px 14px;
+  }
+  .db-hstat { min-width: 0; }
+  .db-hstat__num { font-size: 22px; }
+  .db-hstat__num--big { font-size: 26px; }
   .db-col--left { grid-template-columns: 1fr; }
   .db-brand-page { display: none; }
   .db-last-updated { display: none; }
+  .db-hero__title { font-size: 22px; }
+  .db-hero__sub { font-size: 13px; }
+  .db-card { padding: 18px; }
+  .db-table th, .db-table td { padding: 10px 12px; }
+  .db-brand-sep { display: none; }
+}
+
+/* ── ≤480px: ultra-compact mobile ─────────────────────── */
+@media (max-width: 480px) {
+  .db-topbar__inner { padding: 0 12px; }
+  .db-main { padding: 12px 12px 40px; gap: 16px; }
+  .db-hero { padding: 20px 16px; }
+  .db-hero__stats {
+    grid-template-columns: 1fr 1fr;
+    padding: 12px;
+    gap: 0;
+  }
+  .db-hstat__num { font-size: 20px; }
+  .db-hstat__num--big { font-size: 24px; }
+  .db-hstat__lbl { font-size: 9px; }
+  .db-hero__title { font-size: 20px; }
+  .db-card { padding: 14px; border-radius: var(--r-lg); }
+  .db-card__head { margin-bottom: 14px; }
+  .db-btn { padding: 6px 10px; font-size: 11px; }
+  .db-brand-name { font-size: 14px; }
+  .db-table { font-size: 11.5px; }
+  .db-table th { font-size: 9px; padding: 9px 10px; }
+  .db-table td { padding: 9px 10px; }
+  .db-modal { padding: 24px 20px; }
+  .db-domains { gap: 6px; }
+  .db-domain-item { padding: 9px 11px; }
 }
