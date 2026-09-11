@@ -55,14 +55,19 @@ async function createSanitizedIframe(sanitizedDoc) {
     throw new Error("Could not access sanitized iframe document.");
   }
 
-  // sanitizedDoc is already a clone of the live DOM.
-  // We can safely remove scripts from this sanitized copy.
   sanitizedDoc.querySelectorAll("script").forEach((script) => script.remove());
 
   iframeDoc.replaceChild(
     iframeDoc.importNode(sanitizedDoc.documentElement, true),
     iframeDoc.documentElement,
   );
+
+  // **Fix: Copy all stylesheets and style tags to maintain layout and prevent shifts**
+  document
+    .querySelectorAll("style, link[rel='stylesheet']")
+    .forEach((sheet) => {
+      iframeDoc.head.appendChild(sheet.cloneNode(true));
+    });
 
   await waitForIframeLoad(iframe);
 
@@ -135,8 +140,12 @@ async function updateClickables() {
       throw new Error("Sanitized iframe document unavailable.");
     }
 
+    // Re-apply scroll position right before measurement & screenshot
     copyScrollPosition(sanitizedIframe);
 
+    // Force synchronous layout recalculation
+    sanitizedIframe.contentWindow.getComputedStyle(sanitizedIframeDoc.body)
+      .display;
     const elements = Array.from(
       sanitizedIframeDoc.querySelectorAll(CONFIG.selectors),
     ).filter((el) => {
@@ -257,8 +266,7 @@ async function updateClickables() {
     sendToBackground({
       url: window.location.origin,
       elements: payloadElements,
-      // screenshot: await faceRedaction(screenshotData),
-      screenshot: screenshotData,
+      screenshot: await faceRedaction(screenshotData),
     });
   } catch (error) {
     if (DEBUG) {
