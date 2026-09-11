@@ -561,51 +561,55 @@
       // 2. Render screenshot via html2canvas
       let screenshotB64 = '';
       if (typeof html2canvas !== 'undefined') {
-        const canvas = await html2canvas(iframeDoc.body, {
-          x: window.scrollX,
-          y: window.scrollY,
-          width: window.innerWidth,
-          height: window.innerHeight,
-          windowWidth: window.innerWidth,
-          windowHeight: window.innerHeight,
-          scale: 1,
-          useCORS: true,
-          logging: false,
-        });
-
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          badgeData.forEach((badge) => {
-            const pad = 4;
-            ctx.font = 'bold 10px sans-serif';
-            const metrics = ctx.measureText(badge.text);
-            const boxW = Math.max(16, metrics.width + pad * 2);
-            const boxH = 14;
-
-            ctx.fillStyle = '#ffeb3b';
-            ctx.strokeStyle = '#f57f17';
-            ctx.lineWidth = 1;
-            ctx.fillRect(badge.left, badge.top, boxW, boxH);
-            ctx.strokeRect(badge.left, badge.top, boxW, boxH);
-
-            ctx.fillStyle = '#000000';
-            ctx.fillText(badge.text, badge.left + pad, badge.top + 10);
+        try {
+          const canvas = await html2canvas(iframeDoc.body, {
+            x: window.scrollX,
+            y: window.scrollY,
+            width: window.innerWidth,
+            height: window.innerHeight,
+            windowWidth: window.innerWidth,
+            windowHeight: window.innerHeight,
+            scale: 1,
+            useCORS: true,
+            logging: false,
           });
-        }
 
-        const dataUrl = canvas.toDataURL('image/png');
-        let processedDataUrl = dataUrl;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            badgeData.forEach((badge) => {
+              const pad = 4;
+              ctx.font = 'bold 10px sans-serif';
+              const metrics = ctx.measureText(badge.text);
+              const boxW = Math.max(16, metrics.width + pad * 2);
+              const boxH = 14;
 
-        // 3. Redact faces on screenshot using YuNet ONNX
-        if (typeof window.faceRedaction === 'function') {
-          try {
-            processedDataUrl = await window.faceRedaction(dataUrl);
-          } catch (e) {
-            console.warn('[PrivSight] Face redaction pass:', e);
+              ctx.fillStyle = '#ffeb3b';
+              ctx.strokeStyle = '#f57f17';
+              ctx.lineWidth = 1;
+              ctx.fillRect(badge.left, badge.top, boxW, boxH);
+              ctx.strokeRect(badge.left, badge.top, boxW, boxH);
+
+              ctx.fillStyle = '#000000';
+              ctx.fillText(badge.text, badge.left + pad, badge.top + 10);
+            });
           }
-        }
 
-        screenshotB64 = processedDataUrl.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+          const dataUrl = canvas.toDataURL('image/png');
+          let processedDataUrl = dataUrl;
+
+          // 3. Redact faces on screenshot using YuNet ONNX
+          if (typeof window.faceRedaction === 'function') {
+            try {
+              processedDataUrl = await window.faceRedaction(dataUrl);
+            } catch (e) {
+              console.warn('[PrivSight] Face redaction pass:', e);
+            }
+          }
+
+          screenshotB64 = processedDataUrl.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+        } catch (canvasErr) {
+          console.warn('[PrivSight] html2canvas screenshot capture warning:', canvasErr);
+        }
       }
 
       return {
@@ -760,7 +764,10 @@
     // 4. Action Execution
     if (message.type === 'EXECUTE_ACTION') {
       executeAction(message.action)
-        .then((res) => sendResponse({ ok: true, result: res }))
+        .then((res) => {
+          safePostMessage(bgPort, { type: 'STEP_DONE', result: res });
+          sendResponse({ ok: true, result: res });
+        })
         .catch((err) => {
           console.error('[PrivSight] Execution error:', err);
           sendResponse({ ok: false, error: err.message });
@@ -770,6 +777,68 @@
 
     return true;
   });
+
+  // ─── Background Port & Lifecycle Sync ───────────────────
+  let bgPort = null;
+
+  function safePostMessage(port, msg) {
+    if (!port) return;
+    try {
+      port.postMessage(msg);
+    } catch (err) {
+      const msgStr = err?.message || String(err);
+      if (
+        msgStr.includes('message channel is closed') ||
+        msgStr.includes('context invalidated') ||
+        msgStr.includes('Extension context invalidated')
+      ) {
+        console.debug('[PrivSight Agent] Message channel closed during expected navigation/bfcache lifecycle.');
+      } else {
+        console.warn('[PrivSight Agent] safePostMessage error:', err);
+      }
+    }
+  }
+
+  function handleStateUpdate(state) {
+    if (!state) return;
+    if (state.isRunning && state.isOverlayActive) {
+      if (!isActive) {
+        createOverlay();
+      }
+      if (state.interactive) {
+        setOverlayInteractive(true);
+      }
+    } else if (state.isRunning === false) {
+      removeOverlay(true);
+    }
+  }
+
+  function connectToBackground() {
+    try {
+      bgPort = chrome.runtime.connect({ name: 'privsight-agent' });
+
+      bgPort.onDisconnect.addListener(() => {
+        // Non-destructive: expected when page navigates or enters bfcache
+        void chrome.runtime.lastError;
+        bgPort = null;
+        console.debug('[PrivSight Agent] Port disconnected (expected on navigation).');
+      });
+
+      bgPort.onMessage.addListener((msg) => {
+        if (msg.type === 'STATE_RESPONSE' || msg.type === 'STATE_UPDATE') {
+          handleStateUpdate(msg.state);
+        }
+      });
+
+      // Immediately query background for active execution state
+      safePostMessage(bgPort, { type: 'GET_STATE' });
+    } catch (err) {
+      console.debug('[PrivSight Agent] Port connect notice:', err);
+    }
+  }
+
+  // Connect and sync state immediately on content script load
+  connectToBackground();
 
   window.addEventListener('pagehide', () => {
     clearTimeout(agentTimer);
@@ -782,3 +851,4 @@
 
   console.log('[PrivSight] Unified content agent initialized.');
 })();
+

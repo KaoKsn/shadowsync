@@ -31,20 +31,121 @@ chrome.runtime.onInstalled.addListener(() => {
   }
 });
 
-// ── Track connected sidepanels and popups ──────────────────
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'privsight-sidepanel' || port.name === 'privsight-popup') {
-    let targetTabId = null;
+// ── Execution State Persistence (chrome.storage.session) ──
+const SESSION_STATE_KEY = 'privsight_execution_state';
 
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'AGENT_WORKING' && msg.tabId) {
-        targetTabId = msg.tabId;
-      } else if (msg.type === 'AGENT_IDLE') {
-        targetTabId = null;
+async function getExecutionState() {
+  return new Promise((resolve) => {
+    if (!chrome.storage?.session) {
+      resolve(null);
+      return;
+    }
+    chrome.storage.session.get([SESSION_STATE_KEY], (res) => {
+      resolve(res?.[SESSION_STATE_KEY] || null);
+    });
+  });
+}
+
+async function setExecutionState(state) {
+  return new Promise((resolve) => {
+    if (!chrome.storage?.session) {
+      resolve();
+      return;
+    }
+    chrome.storage.session.set({ [SESSION_STATE_KEY]: state }, () => {
+      resolve();
+    });
+  });
+}
+
+async function clearExecutionState() {
+  return new Promise((resolve) => {
+    if (!chrome.storage?.session) {
+      resolve();
+      return;
+    }
+    chrome.storage.session.remove([SESSION_STATE_KEY], () => {
+      resolve();
+    });
+  });
+}
+
+// ── Track connected sidepanels, popups, and content scripts ─
+chrome.runtime.onConnect.addListener((port) => {
+  // Content script connection (agent.js)
+  if (port.name === 'privsight-agent') {
+    port.onMessage.addListener(async (msg) => {
+      if (msg.type === 'GET_STATE') {
+        const state = await getExecutionState();
+        try {
+          port.postMessage({ type: 'STATE_RESPONSE', state });
+        } catch (_) {
+          // Port closed during navigation/bfcache transition; quietly ignore
+        }
+      } else if (msg.type === 'STEP_DONE') {
+        const state = await getExecutionState();
+        if (state) {
+          state.stepIndex = (state.stepIndex || 0) + 1;
+          state.lastStepResult = msg.result || null;
+          state.updatedAt = Date.now();
+          await setExecutionState(state);
+        }
       }
     });
 
     port.onDisconnect.addListener(() => {
+      // Expected lifecycle event during tab navigation or bfcache; do not treat as error
+      void chrome.runtime.lastError;
+      console.debug('[PrivSight Background] Content script port disconnected (normal navigation/bfcache).');
+    });
+    return;
+  }
+
+  // Side panel / popup connection
+  if (port.name === 'privsight-sidepanel' || port.name === 'privsight-popup') {
+    let targetTabId = null;
+
+    port.onMessage.addListener(async (msg) => {
+      if (msg.type === 'AGENT_WORKING' && msg.tabId) {
+        targetTabId = msg.tabId;
+        const state = (await getExecutionState()) || {};
+        state.tabId = msg.tabId;
+        state.isOverlayActive = true;
+        state.updatedAt = Date.now();
+        await setExecutionState(state);
+      } else if (msg.type === 'AGENT_IDLE') {
+        targetTabId = null;
+        const state = await getExecutionState();
+        if (state) {
+          state.isOverlayActive = false;
+          state.updatedAt = Date.now();
+          await setExecutionState(state);
+        }
+      } else if (msg.type === 'SESSION_START') {
+        targetTabId = msg.tabId || targetTabId;
+        const state = {
+          sessionId: msg.sessionId,
+          tabId: msg.tabId,
+          taskGoal: msg.taskGoal || '',
+          domain: msg.domain || '',
+          status: 'running',
+          isRunning: true,
+          isOverlayActive: true,
+          stepIndex: 0,
+          updatedAt: Date.now(),
+        };
+        await setExecutionState(state);
+      } else if (msg.type === 'SESSION_UPDATE') {
+        const state = (await getExecutionState()) || {};
+        Object.assign(state, msg.data || {}, { updatedAt: Date.now() });
+        await setExecutionState(state);
+      } else if (msg.type === 'SESSION_END') {
+        await clearExecutionState();
+      }
+    });
+
+    port.onDisconnect.addListener(async () => {
+      await clearExecutionState();
       // If the extension window closed while active, kill the in-page Aurora overlay immediately
       if (targetTabId) {
         chrome.tabs.sendMessage(targetTabId, { type: 'STOP_AGENT', immediate: true }, () => {
@@ -80,3 +181,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
+

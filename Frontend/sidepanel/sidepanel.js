@@ -22,11 +22,30 @@
   let userResumeResolver = null;
   let activeLoopAborted = false;
 
-  try {
-    sessionPort = chrome.runtime.connect({ name: 'privsight-sidepanel' });
-  } catch (e) {
-    console.debug('[PrivSight] Port connect:', e);
+  function initSessionPort() {
+    try {
+      sessionPort = chrome.runtime.connect({ name: 'privsight-sidepanel' });
+      sessionPort.onDisconnect.addListener(() => {
+        void chrome.runtime.lastError;
+        sessionPort = null;
+      });
+    } catch (e) {
+      console.debug('[PrivSight] Port connect:', e);
+    }
   }
+
+  function sendSessionMessage(msg) {
+    if (!sessionPort) {
+      initSessionPort();
+    }
+    if (sessionPort) {
+      try {
+        sessionPort.postMessage(msg);
+      } catch (_) {}
+    }
+  }
+
+  initSessionPort();
 
   /**
    * currentStatus — tracks the agent's lifecycle stage.
@@ -155,25 +174,76 @@
     );
   }
 
+  function isNavigationOrBfcacheError(err) {
+    const msg = typeof err === 'string' ? err : (err?.message || '');
+    return (
+      msg.includes('back/forward cache') ||
+      msg.includes('message channel is closed') ||
+      msg.includes('Receiving end does not exist') ||
+      msg.includes('Frame was removed') ||
+      msg.includes('context invalidated')
+    );
+  }
+
+  function waitForTabReady(tabId, timeoutMs = 12000) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      let timer = null;
+
+      function finish() {
+        if (!resolved) {
+          resolved = true;
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          if (timer) clearTimeout(timer);
+          resolve();
+        }
+      }
+
+      function onUpdated(updatedTabId, changeInfo) {
+        if (updatedTabId === tabId && changeInfo.status === 'complete') {
+          setTimeout(finish, 400);
+        }
+      }
+
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      timer = setTimeout(finish, timeoutMs);
+
+      chrome.tabs.get(tabId, (t) => {
+        if (chrome.runtime.lastError || !t) return;
+        if (t.status === 'complete') {
+          setTimeout(finish, 400);
+        }
+      });
+    });
+  }
+
   /**
    * Request content script to capture sanitized DOM and screenshot
    */
-  async function captureActiveTabState() {
+  async function captureActiveTabState(retries = 2) {
     const tab = await resolveActiveTab();
     if (!tab?.id || isRestrictedUrl(tab.url)) {
       throw new Error('PrivSight cannot inspect internal browser pages (' + (tab?.url || 'unknown') + '). Please switch to a regular web page.');
     }
 
     return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, { type: 'CAPTURE_STATE' }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error('Content script communication error: ' + chrome.runtime.lastError.message));
-        } else if (!resp?.ok) {
-          reject(new Error(resp?.error || 'Failed to capture page state'));
-        } else {
-          resolve(resp.data);
-        }
-      });
+      function attempt(attemptsLeft) {
+        chrome.tabs.sendMessage(tab.id, { type: 'CAPTURE_STATE' }, (resp) => {
+          if (chrome.runtime.lastError) {
+            const errMsg = chrome.runtime.lastError.message || '';
+            if (isNavigationOrBfcacheError(errMsg) && attemptsLeft > 0) {
+              setTimeout(() => attempt(attemptsLeft - 1), 600);
+              return;
+            }
+            reject(new Error('Content script communication error: ' + errMsg));
+          } else if (!resp?.ok) {
+            reject(new Error(resp?.error || 'Failed to capture page state'));
+          } else {
+            resolve(resp.data);
+          }
+        });
+      }
+      attempt(retries);
     });
   }
 
@@ -187,9 +257,17 @@
     }
 
     return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, { type: 'EXECUTE_ACTION', action }, (resp) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'EXECUTE_ACTION', action }, async (resp) => {
         if (chrome.runtime.lastError) {
-          reject(new Error('Action execution failed: ' + chrome.runtime.lastError.message));
+          const errMsg = chrome.runtime.lastError.message || '';
+          if (isNavigationOrBfcacheError(errMsg)) {
+            console.debug('[PrivSight Loop] Navigation/bfcache transition detected during action execution. Waiting for new page...');
+            await waitForTabReady(tab.id);
+            await lockPage();
+            resolve({ ok: true, navigated: true });
+            return;
+          }
+          reject(new Error('Action execution failed: ' + errMsg));
         } else if (!resp?.ok) {
           reject(new Error(resp?.error || 'Action execution returned false'));
         } else {
@@ -228,7 +306,7 @@
     return new Promise((resolve) => {
       chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, (response) => {
         if (!chrome.runtime.lastError && response?.ok) {
-          if (sessionPort) sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
+          sendSessionMessage({ type: 'AGENT_WORKING', tabId: targetId });
           resolve();
           return;
         }
@@ -238,7 +316,7 @@
             { target: { tabId: targetId }, files: ['content/agent.js'] },
             () => {
               chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, () => {
-                if (sessionPort) sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
+                sendSessionMessage({ type: 'AGENT_WORKING', tabId: targetId });
                 resolve();
               });
             }
@@ -251,7 +329,7 @@
   }
 
   async function unlockPage() {
-    if (sessionPort) sessionPort.postMessage({ type: 'AGENT_IDLE' });
+    sendSessionMessage({ type: 'AGENT_IDLE' });
     let targetId = activeTabId;
     if (!targetId) {
       const tab = await resolveActiveTab();
@@ -332,6 +410,13 @@
     try {
       // 1. Activate visual Aurora overlay
       await lockPage();
+      sendSessionMessage({
+        type: 'SESSION_START',
+        sessionId,
+        tabId: activeTabId,
+        taskGoal,
+        domain,
+      });
 
       while (!isComplete && !activeLoopAborted) {
         if (turnCount >= MAX_SAFETY_TURNS) {
@@ -385,26 +470,32 @@
           break;
         }
 
+        sendSessionMessage({
+          type: 'SESSION_UPDATE',
+          data: { stepIndex: turnCount + 1, currentAction: turnResponse },
+        });
+
         // ── STEP C: Handle Action Type ──
+        let execResult = null;
         switch (turnResponse.type) {
           case 'CLICK': {
             updateAgentStatus('executing');
             renderActivity('executing', `Clicking element [Hint: ${turnResponse.data_hint || 'N/A'}]...`);
-            await executeTabAction(turnResponse);
+            execResult = await executeTabAction(turnResponse);
             break;
           }
 
           case 'TYPE': {
             updateAgentStatus('executing');
             renderActivity('executing', `Typing into element [Hint: ${turnResponse.data_hint || 'N/A'}]...`);
-            await executeTabAction(turnResponse);
+            execResult = await executeTabAction(turnResponse);
             break;
           }
 
           case 'SCROLL': {
             updateAgentStatus('executing');
             renderActivity('executing', 'Scrolling page viewport...');
-            await executeTabAction(turnResponse);
+            execResult = await executeTabAction(turnResponse);
             break;
           }
 
@@ -446,6 +537,11 @@
             console.warn(`[PrivSight Loop] Unknown action type: ${turnResponse.type}`);
         }
 
+        if (execResult?.navigated) {
+          renderActivity('reading_page', 'Page navigated. Continuing agent loop on new page...');
+          await new Promise((r) => setTimeout(r, 600));
+        }
+
         turnCount++;
         // Small delay to allow DOM render between turns
         await new Promise((r) => setTimeout(r, 600));
@@ -457,6 +553,7 @@
 
       // Clean up overlay and mark completed
       await unlockPage();
+      sendSessionMessage({ type: 'SESSION_END' });
 
       if (isComplete) {
         updateAgentStatus('completed');
@@ -478,6 +575,11 @@
       }
 
     } catch (error) {
+      if (isNavigationOrBfcacheError(error)) {
+        console.debug('[PrivSight Loop] Navigation lifecycle transition handled smoothly.');
+        return;
+      }
+
       console.error('[PrivSight Loop] Execution failed:', error);
       await unlockPage();
       updateAgentStatus('error');
@@ -503,6 +605,7 @@
    */
   async function stopAgent() {
     activeLoopAborted = true;
+    sendSessionMessage({ type: 'SESSION_END' });
     if (userResumeResolver) {
       userResumeResolver('cancel');
       userResumeResolver = null;
