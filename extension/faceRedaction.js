@@ -75,30 +75,6 @@
     return cvReadyPromise;
   }
 
-  /*
-  function waitForOpenCv() {
-    if (!cvReadyPromise) {
-      cvReadyPromise = new Promise((resolve, reject) => {
-        loadOpenCvScript();
-        const startedAt = Date.now();
-        const check = () => {
-          if (typeof cv !== "undefined" && cv.Mat) {
-            resolve();
-          } else if (Date.now() - startedAt > 30000) {
-            reject(
-              new Error("OpenCV.js did not finish loading within 30 seconds."),
-            );
-          } else {
-            setTimeout(check, 50);
-          }
-        };
-        check();
-      });
-    }
-    return cvReadyPromise;
-  }
-
-*/
   // Use the model that has been bundled with the extension.
   function fetchModelBytes(modelUrl) {
     if (!modelBytesPromise) {

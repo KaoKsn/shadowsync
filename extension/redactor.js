@@ -45,6 +45,9 @@
     // Bearer Token
     bearer: /\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/gi,
 
+    // Aadhaar Number
+    aadhaar: /\b(?:\d{4}[\s-]?){2}\d{4}\b/g,
+
     // Known Vendor & Provider API Keys (OpenAI, Anthropic, OpenRouter, HuggingFace, Replicate, AWS, GitHub, Google, Stripe, Slack, SendGrid, Twilio, Resend, Supabase)
     vendorApiKey:
       /\b(?:sk-proj-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}|sk-or-v1-[a-zA-Z0-9_-]{20,}|sk-[a-zA-Z0-9_-]{20,}|hf_[a-zA-Z0-9]{32,}|r8_[a-zA-Z0-9]{32,}|(?:AKIA|ASIA|AGPA|AIPA|ANPA|ANVA|AROA)[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr|github_pat)_[a-zA-Z0-9_]{20,}|AIzaSy[A-Za-z0-9_-]{33}|(?:sk|pk|rk)_(?:live|test)_[0-9a-zA-Z]{24,34}|xox[baprs]-[0-9a-zA-Z-]{10,64}|SG\.[a-zA-Z0-9_-]{10,32}\.[a-zA-Z0-9_-]{20,64}|SK[0-9a-fA-F]{32}|sbp_[a-zA-Z0-9]{40,}|re_[a-zA-Z0-9]{24,}|sq0idp-[0-9A-Za-z-_]{22})\b/g,
@@ -69,6 +72,14 @@
     // Phone Numbers (US & International formats: +1 (555) 234-5678, +91 9876543210, 555-234-5678)
     phone: /(?:\+\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g,
 
+    pan: /\b[A-Z]{5}[0-9]{4}[A-Z]\b/gi,
+
+    ifsc: /\b[A-Z]{4}0[A-Z0-9]{6}\b/gi,
+
+    vehicleRegistration:
+      /\b[A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{1,3}[\s-]?\d{1,4}\b/gi,
+
+    indianPassport: /\b[A-Z][0-9]{7}\b/gi,
     // Account Holder, Cardholder, and Person Name contextual patterns (handles single & multiline names)
     nameContext:
       /\b(?:Account\s+(?:holder|owner|name)|Registered\s+(?:holder|owner|name)|Cardholder(?:\s+name)?|Card\s+holder|User\s*name|Username|Logged\s+in\s+as|Full\s+name|First\s+name|Last\s+name|Customer\s+name|Member\s+name|Billing\s+name|Shipping\s+name|Contact\s+name|Owner\s+name|Holder\s+name|Account\s+User|User\s+Profile|Holder)\s*[:=]\s*([A-Za-z0-9.\s'-]{2,50}?)(?=\s*(?:Registered\s|Email|Phone|SSN|Address|Card|Status|ID|<|$))/gi,
@@ -91,9 +102,39 @@
       }
     }
 
+    // Indian PAN
+    result = result.replace(PII_PATTERNS.pan, (match) => {
+      recordRedaction("pan");
+      return "[REDACTED]";
+    });
+
+    // IFSC
+    result = result.replace(PII_PATTERNS.ifsc, (match) => {
+      recordRedaction("ifsc");
+      return "[REDACTED]";
+    });
+
+    // Vehicle registration
+    result = result.replace(PII_PATTERNS.vehicleRegistration, (match) => {
+      recordRedaction("vehicleRegistration");
+      return "[REDACTED]";
+    });
+
+    // Indian passport
+    result = result.replace(PII_PATTERNS.indianPassport, (match) => {
+      recordRedaction("indianPassport");
+      return "[REDACTED]";
+    });
+
     // 1. Redact JWTs
     result = result.replace(PII_PATTERNS.jwt, (match) => {
       recordRedaction("jwt");
+      return "[REDACTED]";
+    });
+
+    // Redact Aadhaar numbers
+    result = result.replace(PII_PATTERNS.aadhaar, (match) => {
+      recordRedaction("aadhaar");
       return "[REDACTED]";
     });
 
@@ -221,6 +262,11 @@
       let doc;
       const stats = {
         password: 0,
+        aadhaar: 0,
+        indianPassport: 0,
+        ifsc: 0,
+        pan: 0,
+        vehicleRegistration: 0,
         email: 0,
         phone: 0,
         creditCard: 0,
