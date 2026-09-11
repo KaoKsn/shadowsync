@@ -39,7 +39,27 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/agent.js"]
+      "js": [
+        "content/html2canvas.min.js",
+        "content/redactor.js",
+        "content/ort.wasm.min.js",
+        "content/faceRedaction.js",
+        "content/agent.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "face_detection_yunet_2023mar.onnx",
+        "ort-wasm-simd-threaded.wasm",
+        "ort-wasm-simd-threaded.mjs",
+        "content/ort.wasm.min.js",
+        "*.mjs",
+        "*.wasm"
+      ],
+      "matches": ["<all_urls>"]
     }
   ]
 }

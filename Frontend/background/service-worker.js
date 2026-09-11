@@ -71,3 +71,12 @@ chrome.runtime.onConnect.addListener((port) => {
     });
   }
 });
+
+// ── Relay and Message Support ───────────────────────────
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'UPDATE_CLICKABLES') {
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});

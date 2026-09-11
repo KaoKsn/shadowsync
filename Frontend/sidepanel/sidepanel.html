@@ -76,6 +76,18 @@
 
     </div>
 
+    <!-- ── Human-in-the-loop User Action Prompt (visible on USER type) ── -->
+    <div class="ps-user-prompt" id="ps-user-prompt" style="display: none;">
+      <div class="ps-user-prompt__header">
+        <span class="ps-user-prompt__badge">Action Required</span>
+      </div>
+      <p class="ps-user-prompt__text" id="ps-user-prompt-text"></p>
+      <div class="ps-user-prompt__actions">
+        <button class="ps-btn ps-btn--primary" id="ps-resume-btn">Resume Agent</button>
+        <button class="ps-btn ps-btn--secondary" id="ps-cancel-btn">Cancel</button>
+      </div>
+    </div>
+
     <!-- ── Agent activity log (visible while working) ──── -->
     <div class="ps-activity" id="ps-activity" aria-hidden="true">
       <p class="ps-activity__title" id="ps-activity-title">Working on this page</p>

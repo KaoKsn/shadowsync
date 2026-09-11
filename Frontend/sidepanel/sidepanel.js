@@ -1,21 +1,12 @@
 /**
  * PrivSight — Side Panel JavaScript (sidepanel.js)
  *
- * Architecture:
- *  - The side panel is the primary user interface.
- *  - It finds the active browser tab and injects/messages the content script.
- *  - All public-facing functions are clearly named so they can later be
- *    connected to a real AI backend with minimal refactoring.
- *
- * Public Interface (backend-ready):
- *  startAgent(prompt)         — Begin an agent session for the given prompt
- *  stopAgent()                — Cancel a running agent session
- *  updateAgentStatus(status)  — Update the current status stage
- *  updatePrivacyStats(data)   — Push new privacy stats to the UI
- *  lockPage()                 — Inject overlay + lock the current webpage
- *  unlockPage()               — Remove overlay, restore webpage interaction
- *  showAurora()               — Alias for lockPage (visual only in future)
- *  hideAurora()               — Alias for unlockPage (visual only in future)
+ * Drives the live privacy-preserving browser agent:
+ *  1. Captures sanitized DOM + redacted screenshot (PII scrubbed, faces redacted, hint badges added)
+ *  2. Dispatches turns to backend at http://localhost:8000 (POST /turn)
+ *  3. Executes autonomous actions (CLICK, TYPE, SCROLL) in the live webpage
+ *  4. Supports Human-in-the-loop (USER) pauses for 2FA, OTP, Captcha with Resume / Cancel
+ *  5. Terminates on DONE or explicit user stop (DELETE /session/{session_id})
  */
 
 (function () {
@@ -26,6 +17,10 @@
   // ══════════════════════════════════════════════════════════════
   let activeTabId = null;
   let sessionPort = null;
+  let currentSessionId = null;
+  let isLoopPausedForUser = false;
+  let userResumeResolver = null;
+  let activeLoopAborted = false;
 
   try {
     sessionPort = chrome.runtime.connect({ name: 'privsight-sidepanel' });
@@ -37,7 +32,7 @@
    * currentStatus — tracks the agent's lifecycle stage.
    * Valid values: 'idle' | 'connecting' | 'reading_page' | 'protecting_data'
    *               'understanding_page' | 'planning' | 'executing'
-   *               'completed' | 'error'
+   *               'user_action' | 'completed' | 'error'
    */
   let currentStatus = 'idle';
 
@@ -46,49 +41,34 @@
 
   /** Privacy pipeline counters */
   let stats = {
-    dataFound:           0,
+    dataFound: 0,
     sensitiveRecognized: 0,
-    sensitiveRemoved:    0,
+    sensitiveRemoved: 0,
   };
 
-  /** Active simulation timers (so they can be cleared on stopAgent) */
-  let timers = [];
-
-  /** Active session managed by AgentSessionManager in localStorage */
   let activeSession = null;
 
   // ── Status metadata ─────────────────────────────────────────
   const STATUS_META = {
-    idle:              { label: 'Ready',      dotClass: 'ready',     working: false },
-    connecting:        { label: 'Connecting', dotClass: 'working',   working: true  },
-    reading_page:      { label: 'Working',    dotClass: 'working',   working: true  },
-    protecting_data:   { label: 'Working',    dotClass: 'working',   working: true  },
-    understanding_page:{ label: 'Working',    dotClass: 'working',   working: true  },
-    planning:          { label: 'Working',    dotClass: 'working',   working: true  },
-    executing:         { label: 'Working',    dotClass: 'working',   working: true  },
-    completed:         { label: 'Completed',  dotClass: 'completed', working: false },
-    error:             { label: 'Error',      dotClass: 'error',     working: false },
+    idle:               { label: 'Ready',       dotClass: 'ready',     working: false },
+    connecting:         { label: 'Connecting',  dotClass: 'working',   working: true  },
+    reading_page:       { label: 'Scanning',    dotClass: 'working',   working: true  },
+    protecting_data:    { label: 'Protecting',  dotClass: 'working',   working: true  },
+    understanding_page: { label: 'Thinking',    dotClass: 'working',   working: true  },
+    planning:           { label: 'Planning',    dotClass: 'working',   working: true  },
+    executing:          { label: 'Executing',   dotClass: 'working',   working: true  },
+    user_action:        { label: 'Action Needed', dotClass: 'working', working: false },
+    completed:          { label: 'Completed',   dotClass: 'completed', working: false },
+    error:              { label: 'Error',       dotClass: 'error',     working: false },
   };
 
-  // ── Agent activity steps (displayed in the side panel during work) ──
+  // ── Agent activity steps ──
   const ACTIVITY_STEPS = [
-    { id: 'connect',   label: 'Accessing page',              status: 'connecting'         },
-    { id: 'read',      label: 'Reading page content',        status: 'reading_page'       },
-    { id: 'protect',   label: 'Protecting sensitive data',   status: 'protecting_data'    },
-    { id: 'understand',label: 'Understanding page context',  status: 'understanding_page' },
-    { id: 'plan',      label: 'Planning action',             status: 'planning'           },
-    { id: 'execute',   label: 'Executing task',              status: 'executing'          },
-  ];
-
-
-
-  // ── Simulated responses for demo mode ───────────────────────
-  const MOCK_RESPONSES = [
-    ['summarize',  'I\'ve read this page and here\'s a summary: The page contains structured information across several sections. Key data has been identified and protected before this analysis was performed.'],
-    ['find',       'I\'ve scanned the page for the information you requested. Relevant elements were identified in the main content area. Your sensitive session data was kept protected throughout.'],
-    ['fill',       'I\'ve identified the form fields on this page. I\'m ready to fill them securely — your personal data will be masked from any external services before submission.'],
-    ['password',   'I noticed a password field on this page. PrivSight has masked this field from any AI analysis to ensure your credentials remain private.'],
-    ['email',      'Email addresses detected on this page have been redacted from the AI\'s view. Your contact information is protected.'],
+    { id: 'connect',    label: 'Connecting to agent',         status: 'connecting'         },
+    { id: 'read',       label: 'Sanitizing DOM & screenshot', status: 'reading_page'       },
+    { id: 'protect',    label: 'Scrubbing sensitive PII',     status: 'protecting_data'    },
+    { id: 'plan',       label: 'Evaluating next action',      status: 'planning'           },
+    { id: 'execute',    label: 'Executing action on page',    status: 'executing'          },
   ];
 
   // ══════════════════════════════════════════════════════════════
@@ -97,7 +77,7 @@
   const $ = (id) => document.getElementById(id);
 
   const el = {
-    header:          $('ps-header'),
+    header:          $('ps-toolbar') || $('ps-header'),
     logo:            $('ps-logo'),
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
@@ -118,6 +98,10 @@
     statRecognized:  $('ps-stat-recognized'),
     statRemoved:     $('ps-stat-removed'),
     barFill:         $('ps-privacy-bar-fill'),
+    userPrompt:      $('ps-user-prompt'),
+    userPromptText:  $('ps-user-prompt-text'),
+    resumeBtn:       $('ps-resume-btn'),
+    cancelBtn:       $('ps-cancel-btn'),
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -128,29 +112,26 @@
   }
 
   // ══════════════════════════════════════════════════════════════
-  // TAB RESOLUTION
+  // TAB RESOLUTION & MESSAGING
   // ══════════════════════════════════════════════════════════════
   async function resolveActiveTab() {
     return new Promise((resolve) => {
-      // 1. In Brave & Chrome side panels, the webpage tab belongs to lastFocusedWindow
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        const valid = tabs?.find(t => t.id && !t.url?.startsWith('chrome-extension://'));
+        const valid = tabs?.find((t) => t.id && !t.url?.startsWith('chrome-extension://'));
         if (valid) {
           activeTabId = valid.id;
           resolve(valid);
           return;
         }
-        // 2. Fallback: currentWindow
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs2) => {
-          const valid2 = tabs2?.find(t => t.id && !t.url?.startsWith('chrome-extension://'));
+          const valid2 = tabs2?.find((t) => t.id && !t.url?.startsWith('chrome-extension://'));
           if (valid2) {
             activeTabId = valid2.id;
             resolve(valid2);
             return;
           }
-          // 3. Global fallback across all windows
           chrome.tabs.query({ active: true }, (tabs3) => {
-            const valid3 = tabs3?.find(t => t.id && !t.url?.startsWith('chrome-extension://')) || tabs3?.[0];
+            const valid3 = tabs3?.find((t) => t.id && !t.url?.startsWith('chrome-extension://')) || tabs3?.[0];
             if (valid3 && valid3.id) {
               activeTabId = valid3.id;
               resolve(valid3);
@@ -163,175 +144,101 @@
     });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // PUBLIC INTERFACE — Backend-Ready Functions
-  // ══════════════════════════════════════════════════════════════
+  function isRestrictedUrl(url) {
+    if (!url) return true;
+    return (
+      url.startsWith('chrome://') ||
+      url.startsWith('brave://') ||
+      url.startsWith('edge://') ||
+      url.startsWith('about:') ||
+      url.startsWith('chrome-extension://')
+    );
+  }
 
   /**
-   * startAgent(prompt)
-   * Kick off an agent session for the given user prompt.
-   * In production: call your backend API here and replace runSimulation().
+   * Request content script to capture sanitized DOM and screenshot
    */
-  async function startAgent(prompt) {
-    if (STATUS_META[currentStatus]?.working) return; // already running
-
+  async function captureActiveTabState() {
     const tab = await resolveActiveTab();
-    let currentDomain = 'Unknown';
-    if (tab && tab.url) {
-      try {
-        currentDomain = new URL(tab.url).hostname || 'Unknown';
-      } catch (_) {}
+    if (!tab?.id || isRestrictedUrl(tab.url)) {
+      throw new Error('PrivSight cannot inspect internal browser pages (' + (tab?.url || 'unknown') + '). Please switch to a regular web page.');
     }
 
-    // 1. Create unique agent session in localStorage
-    if (typeof AgentSessionManager !== 'undefined') {
-      activeSession = AgentSessionManager.createSession(prompt, {
-        tabId: activeTabId,
-        domain: currentDomain,
+    return new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'CAPTURE_STATE' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error('Content script communication error: ' + chrome.runtime.lastError.message));
+        } else if (!resp?.ok) {
+          reject(new Error(resp?.error || 'Failed to capture page state'));
+        } else {
+          resolve(resp.data);
+        }
       });
+    });
+  }
+
+  /**
+   * Request content script to execute action (CLICK, TYPE, SCROLL)
+   */
+  async function executeTabAction(action) {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) {
+      throw new Error('No active browser tab found for action execution.');
     }
 
-    // Add user message to chat
-    addMessage('user', prompt);
-
-    // Reset stats for fresh run
-    stats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
-    updatePrivacyStats(stats);
-
-    // Lock the webpage and show Aurora
-    await lockPage();
-
-    // Run the agent execution sequence
-    runSimulation(prompt);
-  }
-
-  /**
-   * stopAgent()
-   * Cancel an in-progress agent session.
-   */
-  async function stopAgent() {
-    clearAllTimers();
-    if (activeSession && typeof AgentSessionManager !== 'undefined') {
-      AgentSessionManager.updateSession(activeSession.id, {
-        status: AgentSessionManager.SessionStatus.STOPPED,
+    return new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'EXECUTE_ACTION', action }, (resp) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error('Action execution failed: ' + chrome.runtime.lastError.message));
+        } else if (!resp?.ok) {
+          reject(new Error(resp?.error || 'Action execution returned false'));
+        } else {
+          resolve(resp.result);
+        }
       });
-      AgentSessionManager.appendActionToSession(activeSession.id, {
-        type: 'user_stop',
-        description: 'Agent session manually stopped by user.',
-      });
-      activeSession = null;
-    }
-    await unlockPage();
-    updateAgentStatus('idle');
-    renderActivity(null);
+    });
   }
 
   /**
-   * updateAgentStatus(status)
-   * Update the displayed status stage.
-   * In production: call this whenever the backend sends a status event.
-   * @param {string} status — one of the keys in STATUS_META
+   * Toggle overlay interactive mode for human action steps
    */
-  function updateAgentStatus(status) {
-    currentStatus = status;
-    const meta = STATUS_META[status] || STATUS_META['idle'];
-
-    // Header
-    el.statusText.textContent = meta.label;
-    el.statusDot.className    = `ps-status-dot ${meta.dotClass}`;
-
-    // Header working accent line (guard: ps-header may not exist)
-    if (el.header) el.header.className = `ps-header ${meta.working ? 'working' : status === 'completed' ? 'completed' : ''}`;
-
-    // Logo pulse
-    el.logo.className   = `ps-logo ${meta.working ? 'working' : ''}`;
-
-    // Input state
-    el.input.disabled      = meta.working;
-    el.sendBtn.disabled    = meta.working;
-
-    // Privacy dot
-    el.privDot.className   = `ps-priv-dot ${meta.working ? 'working' : ''}`;
-    el.privacyBadgeTxt.textContent = meta.working ? 'Working' : status === 'completed' ? 'Protected' : 'Protected';
+  async function setUserInteractiveMode(enabled) {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) return;
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(
+        tab.id,
+        { type: enabled ? 'PAUSE_USER_MODE' : 'RESUME_AGENT_MODE' },
+        () => resolve()
+      );
+    });
   }
 
-  /**
-   * updatePrivacyStats(data)
-   * Push new privacy stats to the UI with animated number transitions.
-   * In production: call this whenever the backend sends updated counts.
-   * @param {{ dataFound: number, sensitiveRecognized: number, sensitiveRemoved: number }} data
-   */
-  function updatePrivacyStats(data) {
-    animateNumber(el.statFound,       stats.dataFound,           data.dataFound);
-    animateNumber(el.statRecognized,  stats.sensitiveRecognized, data.sensitiveRecognized);
-    animateNumber(el.statRemoved,     stats.sensitiveRemoved,    data.sensitiveRemoved);
-
-    stats = { ...data };
-
-    // Update protection bar
-    const pct = data.sensitiveRecognized > 0
-      ? (data.sensitiveRemoved / data.sensitiveRecognized) * 100
-      : 0;
-    el.barFill.style.width = `${Math.min(pct, 100)}%`;
-    el.barFill.classList.toggle('partial', pct < 100 && pct > 0);
-  }
-
-  /**
-   * lockPage()
-   * Inject agent.js into the current tab and send START_AGENT.
-   * This creates the Aurora overlay and blocks page interaction.
-   * In production: also pass sanitized context to the backend.
-   */
+  // ══════════════════════════════════════════════════════════════
+  // OVERLAY CONTROLS
+  // ══════════════════════════════════════════════════════════════
   async function lockPage() {
     let tab = activeTabId ? { id: activeTabId } : await resolveActiveTab();
-    if (!tab?.id) {
-      tab = await resolveActiveTab();
-    }
-    if (!tab?.id) {
-      console.warn('[PrivSight] Cannot lock page: no active tab found.');
-      return;
-    }
+    if (!tab?.id) tab = await resolveActiveTab();
+    if (!tab?.id || isRestrictedUrl(tab.url)) return;
+
     activeTabId = tab.id;
     const targetId = activeTabId;
 
-    if (tab.url && (
-      tab.url.startsWith('chrome://') ||
-      tab.url.startsWith('brave://') ||
-      tab.url.startsWith('edge://') ||
-      tab.url.startsWith('about:') ||
-      tab.url.startsWith('chrome-extension://')
-    )) {
-      console.info('[PrivSight] Cannot inject into internal browser page:', tab.url);
-      return;
-    }
-
     return new Promise((resolve) => {
-      // Step A: Attempt direct message (works if agent.js is already running via content_scripts)
       chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, (response) => {
         if (!chrome.runtime.lastError && response?.ok) {
-          if (sessionPort) {
-            sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
-          }
+          if (sessionPort) sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
           resolve();
           return;
         }
 
-        // Step B: If not listening yet, dynamically inject agent.js then send START_AGENT
         if (chrome?.scripting?.executeScript) {
           chrome.scripting.executeScript(
             { target: { tabId: targetId }, files: ['content/agent.js'] },
             () => {
-              if (chrome.runtime.lastError) {
-                console.warn('[PrivSight] Script inject note:', chrome.runtime.lastError.message);
-              }
-              // Always attempt to send message after injection
               chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, () => {
-                if (chrome.runtime.lastError) {
-                  console.debug('[PrivSight] START_AGENT retry:', chrome.runtime.lastError.message);
-                }
-                if (sessionPort) {
-                  sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
-                }
+                if (sessionPort) sessionPort.postMessage({ type: 'AGENT_WORKING', tabId: targetId });
                 resolve();
               });
             }
@@ -343,15 +250,8 @@
     });
   }
 
-  /**
-   * unlockPage()
-   * Send STOP_AGENT to the content script, removing the Aurora overlay
-   * and restoring normal page interaction.
-   */
   async function unlockPage() {
-    if (sessionPort) {
-      sessionPort.postMessage({ type: 'AGENT_IDLE' });
-    }
+    if (sessionPort) sessionPort.postMessage({ type: 'AGENT_IDLE' });
     let targetId = activeTabId;
     if (!targetId) {
       const tab = await resolveActiveTab();
@@ -360,230 +260,334 @@
     if (!targetId) return;
     return new Promise((resolve) => {
       chrome.tabs.sendMessage(targetId, { type: 'STOP_AGENT', immediate: true }, () => {
-        if (chrome.runtime.lastError) {
-          console.debug('[PrivSight] STOP_AGENT:', chrome.runtime.lastError.message);
-        }
+        void chrome.runtime.lastError;
         resolve();
       });
     });
   }
 
   // ══════════════════════════════════════════════════════════════
-  // SESSION PERSISTENCE — saves completed sessions to chrome.storage
+  // AGENT EXECUTION LOOP (Backend Integration Guide)
   // ══════════════════════════════════════════════════════════════
+  const MAX_SAFETY_TURNS = 25;
 
   /**
-   * persistSession(sessionData)
-   * Appends a session record to chrome.storage.local under 'privsight-history'.
-   * The dashboard reads this key to show all-time analytics.
+   * startAgent(prompt)
+   * Triggered ONLY when the user sends a task goal via the UI.
    */
-  async function persistSession(sessionData) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get({ 'privsight-history': [] }, (result) => {
-        const history = result['privsight-history'];
-        history.push(sessionData);
-        chrome.storage.local.set({ 'privsight-history': history }, resolve);
-      });
-    });
-  }
+  async function startAgent(prompt) {
+    if (STATUS_META[currentStatus]?.working) return; // already working
 
-  /**
-   * openDashboard()
-   * Opens the analytics dashboard in a new browser tab.
-   */
-  function openDashboard() {
-    chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
-  }
+    const tab = await resolveActiveTab();
+    if (tab && isRestrictedUrl(tab.url)) {
+      addMessage('agent', `PrivSight cannot run on internal browser URLs (${tab.url}). Please open a regular website first.`);
+      return;
+    }
 
-  /** showAurora — visual alias for lockPage (ready for visual-only separation) */
-  async function showAurora() { return lockPage(); }
+    let currentDomain = 'Unknown';
+    if (tab && tab.url) {
+      try {
+        currentDomain = new URL(tab.url).hostname || 'Unknown';
+      } catch (_) {}
+    }
 
-  /** hideAurora — visual alias for unlockPage */
-  async function hideAurora() { return unlockPage(); }
+    // 1. Generate unique session UUID
+    currentSessionId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-  // ══════════════════════════════════════════════════════════════
-  // SIMULATION ENGINE
-  // Sequential async pipeline — each stage waits for the previous.
-  // GUARANTEED ORDER:
-  //   1. Aurora appears (lockPage done before runSimulation is called)
-  //   2. Checklist steps tick through one by one while aurora stays
-  //   3. All steps complete → reply is added to chat
-  //   4. Aurora closes AFTER reply is visible
-  //   5. Status → completed, then idle after 4s
-  // ══════════════════════════════════════════════════════════════
-
-
-  async function runSimulation(prompt) {
-    const cancel = { cancelled: false };
-
-    const sequence = [
-      { status: 'connecting',         duration: 1600 },
-      { status: 'reading_page',       duration: 1800 },
-      { status: 'protecting_data',    duration: 2000 },
-      { status: 'understanding_page', duration: 1800 },
-      { status: 'planning',           duration: 1600 },
-      { status: 'executing',          duration: 2200 },
-    ];
-
-    const statIncrements = [
-      { dataFound: 412,  sensitiveRecognized: 0,  sensitiveRemoved: 0  },
-      { dataFound: 938,  sensitiveRecognized: 0,  sensitiveRemoved: 0  },
-      { dataFound: 0,    sensitiveRecognized: 31, sensitiveRemoved: 31 },
-      { dataFound: 518,  sensitiveRecognized: 14, sensitiveRemoved: 14 },
-      { dataFound: 193,  sensitiveRecognized: 8,  sensitiveRemoved: 8  },
-      { dataFound: 0,    sensitiveRecognized: 0,  sensitiveRemoved: 0  },
-    ];
-
-    // ── PHASE 1: Step through the checklist ───────────────
-    // Aurora is already live. Each step waits its full duration
-    // before the next one begins — no overlapping timeouts.
-    for (let i = 0; i < sequence.length; i++) {
-      if (cancel.cancelled) return;
-
-      const { status, duration } = sequence[i];
-      updateAgentStatus(status);
-      renderActivity(status);
-
-      const inc = statIncrements[i];
-      updatePrivacyStats({
-        dataFound:           stats.dataFound           + inc.dataFound,
-        sensitiveRecognized: stats.sensitiveRecognized + inc.sensitiveRecognized,
-        sensitiveRemoved:    stats.sensitiveRemoved    + inc.sensitiveRemoved,
-      });
-
-      // Trigger agent action / call backend placeholder & update localStorage session
-      if (activeSession && typeof AgentSessionManager !== 'undefined') {
-        try {
-          const agentAction = await AgentSessionManager.fetchAgentAction(activeSession, i, {
-            stats: { ...stats },
-          });
-
-          // Store agent action in session and update localStorage
-          AgentSessionManager.appendActionToSession(activeSession.id, {
-            stepIndex: i,
-            action: agentAction.action,
-            status: status,
-            description: agentAction.description,
-            stats: { ...stats },
-          });
-
-          // Update session status in localStorage
-          AgentSessionManager.updateSession(activeSession.id, {
-            status: status,
-          });
-        } catch (err) {
-          console.warn('[PrivSight Session] Action fetch notice:', err);
-        }
-      }
-
-      // Wait for this step to complete before advancing
-      await new Promise((resolve) => {
-        const t = setTimeout(resolve, duration);
-        timers.push(t);
+    if (typeof AgentSessionManager !== 'undefined') {
+      activeSession = AgentSessionManager.createSession(prompt, {
+        id: currentSessionId,
+        tabId: activeTabId,
+        domain: currentDomain,
       });
     }
 
-    if (cancel.cancelled) return;
+    activeLoopAborted = false;
+    isLoopPausedForUser = false;
+    if (el.userPrompt) el.userPrompt.style.display = 'none';
 
-    // ── PHASE 2: Pause so user sees "Executing" finish ────
-    await new Promise((resolve) => {
-      const t = setTimeout(resolve, 1200);
-      timers.push(t);
-    });
+    // Add user message to chat
+    addMessage('user', prompt);
 
-    if (cancel.cancelled) return;
+    // Reset stats
+    stats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
+    updatePrivacyStats(stats);
 
-    // ── PHASE 3: Finalize stats ───────────────────────────
-    stats.sensitiveRemoved = stats.sensitiveRecognized;
-    updatePrivacyStats({ ...stats });
+    // Start live agent backend loop
+    runAgentLoop(prompt, currentSessionId, currentDomain);
+  }
 
-    // ── PHASE 4: Show the reply (aurora still active) ─────
-    const lower = prompt.toLowerCase();
-    const match = MOCK_RESPONSES.find(([k]) => lower.includes(k));
-    const reply = match
-      ? match[1]
-      : "Done. I've completed the task on this page while keeping your sensitive information protected throughout.";
+  /**
+   * Autonomous loop driving POST /turn and action executions
+   */
+  async function runAgentLoop(taskGoal, sessionId, domain) {
+    let turnCount = 0;
+    let isComplete = false;
 
-    addMessage('agent', reply);
-    updateAgentStatus('completed');
-    renderActivity(null);
+    updateAgentStatus('connecting');
+    renderActivity('connecting', 'Connecting to agent...');
 
-    // Record completed state & reply action in session localStorage
-    if (activeSession && typeof AgentSessionManager !== 'undefined') {
-      AgentSessionManager.appendActionToSession(activeSession.id, {
-        type: 'agent_response',
-        reply: reply,
-        isFinal: true,
-        stats: { ...stats },
-      });
-      AgentSessionManager.updateSession(activeSession.id, {
-        status: AgentSessionManager.SessionStatus.COMPLETED,
-      });
-      activeSession = null;
-    }
-
-    // ── PHASE 5: Close aurora AFTER reply is visible ──────
-    await unlockPage();
-
-    // ── PHASE 6: Persist to Dashboard storage ────────────
-    let domain = 'Unknown';
     try {
-      const tab = await resolveActiveTab();
-      if (tab && tab.url) {
-        domain = new URL(tab.url).hostname || 'Unknown';
+      // 1. Activate visual Aurora overlay
+      await lockPage();
+
+      while (!isComplete && !activeLoopAborted) {
+        if (turnCount >= MAX_SAFETY_TURNS) {
+          addMessage('agent', `Safety limit reached (${MAX_SAFETY_TURNS} turns). Stopping automation to protect your session.`);
+          break;
+        }
+
+        // ── STEP A: Capture sanitized DOM + redacted screenshot ──
+        updateAgentStatus('reading_page');
+        renderActivity('reading_page', `Turn ${turnCount + 1}: Scrubbing DOM and capturing screenshot...`);
+
+        const capturedState = await captureActiveTabState();
+        if (activeLoopAborted) break;
+
+        // Push real redaction stats from DOMRedactor to the UI
+        if (capturedState.stats) {
+          stats.dataFound += capturedState.stats.dataFound || 0;
+          stats.sensitiveRecognized += capturedState.stats.sensitiveRecognized || 0;
+          stats.sensitiveRemoved += capturedState.stats.sensitiveRemoved || 0;
+          updatePrivacyStats(stats);
+        }
+
+        // ── STEP B: POST /turn to Backend ──
+        updateAgentStatus('planning');
+        renderActivity('planning', `Turn ${turnCount + 1}: Waiting for agent reasoning...`);
+
+        const turnPayload = {
+          sessionId,
+          taskGoal: turnCount === 0 ? taskGoal : '', // only used on first turn
+          sanitizedDom: capturedState.sanitized_dom || [],
+          sanitizedScreenshotB64: capturedState.sanitized_screenshot_b64 || '',
+        };
+
+        const turnResponse = await AgentBackendClient.postTurn(turnPayload);
+        if (activeLoopAborted) break;
+
+        console.log(`[PrivSight Loop] Turn ${turnCount + 1} response:`, turnResponse);
+
+        // Record reasoning if provided
+        if (turnResponse.reasoning) {
+          renderActivity('planning', turnResponse.reasoning);
+        }
+
+        // Check completion flag
+        if (turnResponse.is_complete || turnResponse.type === 'DONE') {
+          isComplete = true;
+          const finalReply = turnResponse.text || "Task completed successfully while keeping your sensitive data protected.";
+          addMessage('agent', finalReply);
+          updateAgentStatus('completed');
+          renderActivity(null);
+          break;
+        }
+
+        // ── STEP C: Handle Action Type ──
+        switch (turnResponse.type) {
+          case 'CLICK': {
+            updateAgentStatus('executing');
+            renderActivity('executing', `Clicking element [Hint: ${turnResponse.data_hint || 'N/A'}]...`);
+            await executeTabAction(turnResponse);
+            break;
+          }
+
+          case 'TYPE': {
+            updateAgentStatus('executing');
+            renderActivity('executing', `Typing into element [Hint: ${turnResponse.data_hint || 'N/A'}]...`);
+            await executeTabAction(turnResponse);
+            break;
+          }
+
+          case 'SCROLL': {
+            updateAgentStatus('executing');
+            renderActivity('executing', 'Scrolling page viewport...');
+            await executeTabAction(turnResponse);
+            break;
+          }
+
+          case 'USER': {
+            // Pause loop, display instruction, wait for user confirmation
+            updateAgentStatus('user_action');
+            renderActivity(null);
+            await setUserInteractiveMode(true);
+
+            const promptText = turnResponse.text || 'Manual action required. Please perform the step on the page, then click Resume.';
+            addMessage('agent', `⚠️ Action required: ${promptText}`);
+
+            if (el.userPrompt && el.userPromptText) {
+              el.userPromptText.textContent = promptText;
+              el.userPrompt.style.display = 'block';
+            }
+
+            // Wait for user to click Resume or Cancel
+            const userChoice = await new Promise((resolve) => {
+              userResumeResolver = resolve;
+            });
+
+            if (el.userPrompt) el.userPrompt.style.display = 'none';
+            await setUserInteractiveMode(false);
+
+            if (userChoice === 'cancel' || activeLoopAborted) {
+              await AgentBackendClient.deleteSession(sessionId);
+              addMessage('agent', 'Task cancelled by user.');
+              activeLoopAborted = true;
+              break;
+            }
+
+            // User clicked resume: loop continues normally
+            renderActivity('reading_page', 'Resuming agent loop with updated page state...');
+            break;
+          }
+
+          default:
+            console.warn(`[PrivSight Loop] Unknown action type: ${turnResponse.type}`);
+        }
+
+        turnCount++;
+        // Small delay to allow DOM render between turns
+        await new Promise((r) => setTimeout(r, 600));
       }
-    } catch (_) {}
 
-    const totalSensitive = stats.sensitiveRecognized;
-    const breakdown = {
-      email:      Math.round(totalSensitive * 0.35),
-      phone:      Math.round(totalSensitive * 0.20),
-      creditCard: Math.round(totalSensitive * 0.15),
-      ssn:        Math.round(totalSensitive * 0.10),
-      password:   Math.round(totalSensitive * 0.12),
-      other:      totalSensitive - Math.round(totalSensitive * 0.92),
-    };
+      // Finalize stats
+      stats.sensitiveRemoved = stats.sensitiveRecognized;
+      updatePrivacyStats({ ...stats });
 
-    await persistSession({
-      id:                  Date.now(),
-      timestamp:           new Date().toISOString(),
-      domain,
-      prompt,
-      dataFound:           stats.dataFound,
-      sensitiveRecognized: stats.sensitiveRecognized,
-      sensitiveRemoved:    stats.sensitiveRemoved,
-      protectionRate:      stats.sensitiveRecognized > 0
-                             ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
-                             : 100,
-      breakdown,
-    });
+      // Clean up overlay and mark completed
+      await unlockPage();
 
-    // ── PHASE 7: Return to idle ───────────────────────────
-    const idleT = setTimeout(() => updateAgentStatus('idle'), 4000);
-    timers.push(idleT);
+      if (isComplete) {
+        updateAgentStatus('completed');
+        // Persist session to local history
+        await persistSession({
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          domain,
+          prompt: taskGoal,
+          dataFound: stats.dataFound,
+          sensitiveRecognized: stats.sensitiveRecognized,
+          sensitiveRemoved: stats.sensitiveRemoved,
+          protectionRate: stats.sensitiveRecognized > 0
+            ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
+            : 100,
+        });
+      } else if (!activeLoopAborted) {
+        updateAgentStatus('idle');
+      }
+
+    } catch (error) {
+      console.error('[PrivSight Loop] Execution failed:', error);
+      await unlockPage();
+      updateAgentStatus('error');
+      renderActivity(null);
+
+      const msg = error.message?.includes('Failed to fetch')
+        ? 'Could not connect to backend at http://localhost:8000. Please ensure the agent backend server is running and accessible.'
+        : `Agent error: ${error.message}`;
+
+      addMessage('agent', `❌ ${msg}`);
+    } finally {
+      setTimeout(() => {
+        if (currentStatus === 'completed' || currentStatus === 'error') {
+          updateAgentStatus('idle');
+        }
+      }, 5000);
+    }
   }
 
+  /**
+   * stopAgent()
+   * Cancel an in-progress agent session and notify backend
+   */
+  async function stopAgent() {
+    activeLoopAborted = true;
+    if (userResumeResolver) {
+      userResumeResolver('cancel');
+      userResumeResolver = null;
+    }
 
+    if (currentSessionId) {
+      AgentBackendClient.deleteSession(currentSessionId).catch(() => {});
+      currentSessionId = null;
+    }
+
+    if (el.userPrompt) el.userPrompt.style.display = 'none';
+    await unlockPage();
+    updateAgentStatus('idle');
+    renderActivity(null);
+  }
 
   // ══════════════════════════════════════════════════════════════
-  // UI RENDERING
+  // UI HELPERS
   // ══════════════════════════════════════════════════════════════
+  function updateAgentStatus(status) {
+    currentStatus = status;
+    const meta = STATUS_META[status] || STATUS_META['idle'];
 
-  /** Add a message to the chat and scroll to bottom */
+    el.statusText.textContent = meta.label;
+    el.statusDot.className = `ps-status-dot ${meta.dotClass}`;
+
+    if (el.header) {
+      el.header.className = `ps-toolbar ${meta.working ? 'working' : status === 'completed' ? 'completed' : ''}`;
+    }
+
+    el.logo.className = `ps-logo ${meta.working ? 'working' : ''}`;
+
+    const isWorking = meta.working;
+    el.input.disabled = isWorking;
+    el.sendBtn.disabled = isWorking;
+
+    el.privDot.className = `ps-priv-dot ${isWorking ? 'working' : ''}`;
+    el.privacyBadgeTxt.textContent = isWorking ? 'Working' : status === 'completed' ? 'Protected' : 'Protected';
+  }
+
+  function updatePrivacyStats(data) {
+    animateNumber(el.statFound, stats.dataFound, data.dataFound);
+    animateNumber(el.statRecognized, stats.sensitiveRecognized, data.sensitiveRecognized);
+    animateNumber(el.statRemoved, stats.sensitiveRemoved, data.sensitiveRemoved);
+
+    stats = { ...data };
+
+    const pct = data.sensitiveRecognized > 0
+      ? (data.sensitiveRemoved / data.sensitiveRecognized) * 100
+      : 100;
+    el.barFill.style.width = `${Math.min(pct, 100)}%`;
+    el.barFill.classList.toggle('partial', pct < 100 && pct > 0);
+  }
+
+  function animateNumber(element, from, to) {
+    if (!element || from === to) return;
+    const duration = 500;
+    const start = performance.now();
+
+    function tick(now) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const value = Math.round(from + (to - from) * eased);
+      element.textContent = value.toLocaleString();
+      if (progress < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        element.textContent = to.toLocaleString();
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
   function addMessage(role, text) {
     const id = `msg-${Date.now()}`;
     messages.push({ id, role, text, ts: Date.now() });
     renderMessages();
   }
 
-  /** Re-render all chat messages */
   function renderMessages() {
-    // Hide idle placeholder if there are messages
     el.idle.style.display = messages.length === 0 ? 'flex' : 'none';
     el.quickActions.classList.toggle('hidden', messages.length > 0);
 
-    // Remove old message nodes (keep idle node)
-    el.chat.querySelectorAll('.ps-msg').forEach(n => n.remove());
+    el.chat.querySelectorAll('.ps-msg').forEach((n) => n.remove());
 
     messages.forEach((msg) => {
       const div = document.createElement('div');
@@ -603,17 +607,11 @@
       el.chat.appendChild(div);
     });
 
-    // Scroll to bottom
     el.chat.scrollTop = el.chat.scrollHeight;
   }
 
-  /**
-   * renderActivity(activeStatus)
-   * Show/hide and update the agent activity log.
-   * Pass null to hide the log.
-   */
-  function renderActivity(activeStatus) {
-    if (!activeStatus) {
+  function renderActivity(statusOrDone, customLabel) {
+    if (!statusOrDone) {
       el.activity.classList.remove('visible');
       el.activitySteps.innerHTML = '';
       return;
@@ -622,59 +620,33 @@
     el.activity.classList.add('visible');
     el.activitySteps.innerHTML = '';
 
-    const activeIndex = ACTIVITY_STEPS.findIndex(s => s.status === activeStatus);
+    const li = document.createElement('li');
+    li.className = 'ps-step ps-step--active';
 
-    ACTIVITY_STEPS.forEach((step, i) => {
-      if (i > activeIndex) return; // don't show future steps
+    const icon = document.createElement('span');
+    icon.className = 'ps-step__icon';
+    icon.textContent = '◌';
 
-      const li = document.createElement('li');
-      const isDone   = i < activeIndex;
-      const isActive = i === activeIndex;
+    const label = document.createElement('span');
+    label.textContent = customLabel || 'Working...';
 
-      li.className = `ps-step ${isDone ? 'ps-step--done' : isActive ? 'ps-step--active' : ''}`;
+    li.appendChild(icon);
+    li.appendChild(label);
+    el.activitySteps.appendChild(li);
+  }
 
-      const icon = document.createElement('span');
-      icon.className = 'ps-step__icon';
-      icon.textContent = isDone ? '✓' : '◌';
-
-      const label = document.createElement('span');
-      label.textContent = step.label;
-
-      li.appendChild(icon);
-      li.appendChild(label);
-      el.activitySteps.appendChild(li);
+  async function persistSession(sessionData) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ 'privsight-history': [] }, (result) => {
+        const history = result['privsight-history'];
+        history.push(sessionData);
+        chrome.storage.local.set({ 'privsight-history': history }, resolve);
+      });
     });
   }
 
-  /** Clear all running simulation timers */
-  function clearAllTimers() {
-    timers.forEach(clearTimeout);
-    timers = [];
-  }
-
-  // ══════════════════════════════════════════════════════════════
-  // NUMBER ANIMATION
-  // ══════════════════════════════════════════════════════════════
-  function animateNumber(element, from, to) {
-    if (from === to) return;
-    const duration = 700;
-    const start    = performance.now();
-    element.classList.add('animating');
-
-    function tick(now) {
-      const elapsed = now - start;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3); // cubic ease-out
-      const value = Math.round(from + (to - from) * eased);
-      element.textContent = value.toLocaleString();
-      if (progress < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        element.textContent = to.toLocaleString();
-        element.classList.remove('animating');
-      }
-    }
-    requestAnimationFrame(tick);
+  function openDashboard() {
+    chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -700,35 +672,23 @@
   }
 
   // ══════════════════════════════════════════════════════════════
-  // INITIALISATION
+  // INITIALIZATION
   // ══════════════════════════════════════════════════════════════
   function init() {
-    // Session recovery on reload
-    if (typeof AgentSessionManager !== 'undefined') {
-      AgentSessionManager.handlePageRefreshRecovery();
-    }
-
-    // Theme
     initTheme();
 
-    // Dashboard button
     el.dashboardBtn.addEventListener('click', openDashboard);
-
-    // Close panel
     el.closeBtn.addEventListener('click', async () => {
       await stopAgent();
       window.close();
     });
 
-    // Find the active tab right away
     resolveActiveTab();
 
-    // Track tab changes (side panel persists across navigations)
     chrome.tabs.onActivated.addListener(async (info) => {
       activeTabId = info.tabId;
     });
 
-    // Input events
     el.sendBtn.addEventListener('click', handleSend);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -737,31 +697,37 @@
       }
     });
 
-    // Quick action chips
     el.quickActions.addEventListener('click', handleChipClick);
 
-    // Set initial UI state
+    // Human-in-the-loop Resume & Cancel buttons
+    if (el.resumeBtn) {
+      el.resumeBtn.addEventListener('click', () => {
+        if (userResumeResolver) {
+          userResumeResolver('resume');
+          userResumeResolver = null;
+        }
+      });
+    }
+
+    if (el.cancelBtn) {
+      el.cancelBtn.addEventListener('click', () => {
+        if (userResumeResolver) {
+          userResumeResolver('cancel');
+          userResumeResolver = null;
+        }
+      });
+    }
+
     updateAgentStatus('idle');
     renderMessages();
-
     el.input.focus();
   }
 
-  // Cleanup on unload / close
-  function handlePanelClose() {
-    clearAllTimers();
-    if (activeTabId && chrome?.tabs?.sendMessage) {
-      chrome.tabs.sendMessage(activeTabId, { type: 'STOP_AGENT', immediate: true }, () => {
-        void chrome.runtime.lastError;
-      });
+  window.addEventListener('pagehide', () => {
+    if (currentSessionId) {
+      AgentBackendClient.deleteSession(currentSessionId).catch(() => {});
     }
-  }
+  });
 
-  window.addEventListener('pagehide', handlePanelClose);
-  window.addEventListener('beforeunload', handlePanelClose);
-  window.addEventListener('unload', handlePanelClose);
-
-  // Boot
   document.addEventListener('DOMContentLoaded', init);
-
 })();

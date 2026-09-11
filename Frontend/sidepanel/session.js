@@ -255,105 +255,146 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // Backend Communication Placeholder
+  // Backend Client & Communication Layer (Integration Guide)
+  // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
+  const BASE_URL = 'http://10.156.193.248:8000';
+
+  const AgentBackendClient = {
+    BASE_URL,
+
+    /**
+     * Check backend liveness.
+     * GET /health
+     * @returns {Promise<{ status: string }>}
+     */
+    async checkHealth() {
+      try {
+        const response = await fetch(`${BASE_URL}/health`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Health check returned HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (err) {
+        console.warn('[PrivSight Client] Backend health check failed:', err);
+        throw err;
+      }
+    },
+
+    /**
+     * Sends the current turn payload to the agent backend.
+     * POST /turn
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.taskGoal - Used on first call for a session
+     * @param {Array<Object>} params.sanitizedDom
+     * @param {string} params.sanitizedScreenshotB64 - Raw base64, no data: prefix
+     * @returns {Promise<{
+     *   session_id: string,
+     *   type: 'CLICK' | 'TYPE' | 'SCROLL' | 'DONE' | 'USER',
+     *   data_hint: string | null,
+     *   element_id: string | null,
+     *   text: string | null,
+     *   reasoning: string | null,
+     *   is_complete: boolean
+     * }>}
+     */
+    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64 }) {
+      if (!sessionId) {
+        throw new Error('postTurn: sessionId is required');
+      }
+
+      // Ensure screenshot is raw base64 with no data: prefix
+      const cleanB64 = (sanitizedScreenshotB64 || '').replace(
+        /^data:image\/[a-zA-Z+.-]+;base64,/,
+        ''
+      );
+
+      // Filter sanitized_dom to strictly include only data_hint and tag
+      const compactDom = (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
+        data_hint: String(el.data_hint !== undefined ? el.data_hint : el.datahint || ''),
+        tag: String(el.tag || 'div'),
+      }));
+
+      const payload = {
+        session_id: String(sessionId),
+        task_goal: String(taskGoal || ''),
+        sanitized_dom: compactDom,
+        sanitized_screenshot_b64: cleanB64,
+      };
+
+      console.log(`[PrivSight Client] POST /turn (session: ${sessionId}, elements: ${payload.sanitized_dom.length})`);
+
+      const response = await fetch(`${BASE_URL}/turn`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData.detail) {
+            errorDetail = typeof errData.detail === 'string'
+              ? errData.detail
+              : JSON.stringify(errData.detail);
+          }
+        } catch (_) {}
+        throw new Error(`Backend /turn error: ${errorDetail}`);
+      }
+
+      const data = await response.json();
+      console.log('[PrivSight Client] /turn response:', data);
+      return data;
+    },
+
+    /**
+     * Cancels / deletes a session on the backend.
+     * DELETE /session/{session_id}
+     *
+     * @param {string} sessionId
+     * @returns {Promise<Object>}
+     */
+    async deleteSession(sessionId) {
+      if (!sessionId) return { status: 'skipped' };
+      try {
+        const response = await fetch(`${BASE_URL}/session/${encodeURIComponent(sessionId)}`, {
+          method: 'DELETE',
+          headers: { Accept: 'application/json' },
+        });
+        if (response.status === 404) {
+          return { status: 'not_found' };
+        }
+        if (!response.ok) {
+          throw new Error(`DELETE /session returned HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (err) {
+        console.warn(`[PrivSight Client] DELETE /session/${sessionId} notice:`, err.message);
+        return { status: 'error', error: err.message };
+      }
+    },
+  };
+
   /**
-   * Placeholder function to call the backend agent API.
-   * Replace this implementation when connecting the real backend server.
-   *
-   * @param {Object} session - The active session object
-   * @param {number} stepIndex - Current step index
-   * @param {Object} [context] - Context data (e.g. current URL, page state, privacy counters)
-   * @returns {Promise<Object>} Agent action/response from backend
+   * Helper function to dispatch turns to backend or fallback gracefully
    */
-  async function fetchAgentAction(session, stepIndex, context = {}) {
-    // ═════════════════════════════════════════════════════════
-    // Real Backend Integration Pattern (Ready for backend):
-    // ═════════════════════════════════════════════════════════
-    // const response = await fetch('http://127.0.0.1:8000/api/agent/step', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //     'X-Session-ID': session.id,
-    //   },
-    //   body: JSON.stringify({
-    //     sessionId: session.id,
-    //     task: session.task,
-    //     stepIndex: stepIndex,
-    //     context: context,
-    //   }),
-    // });
-    // if (!response.ok) {
-    //   throw new Error(`Agent backend returned error: ${response.status}`);
-    // }
-    // return await response.json();
-
-    // ═════════════════════════════════════════════════════════
-    // Local Simulation Placeholder:
-    // ═════════════════════════════════════════════════════════
-    const mockPlan = [
-      {
-        actionType: 'CONNECT',
-        status: 'connecting',
-        description: 'Connecting to privacy-preserving broker and initializing environment',
-        statIncrement: { dataFound: 412, sensitiveRecognized: 0, sensitiveRemoved: 0 },
-        duration: 1500,
-      },
-      {
-        actionType: 'SCAN_DOM',
-        status: 'reading_page',
-        description: 'Reading DOM structure and inspecting page input fields',
-        statIncrement: { dataFound: 938, sensitiveRecognized: 0, sensitiveRemoved: 0 },
-        duration: 1800,
-      },
-      {
-        actionType: 'SANITIZE_DATA',
-        status: 'protecting_data',
-        description: 'Masking sensitive identifiers, credentials, and personal information',
-        statIncrement: { dataFound: 0, sensitiveRecognized: 31, sensitiveRemoved: 31 },
-        duration: 2000,
-      },
-      {
-        actionType: 'UNDERSTAND_CONTEXT',
-        status: 'understanding_page',
-        description: 'Building sanitized comprehension representation for agent decision model',
-        statIncrement: { dataFound: 518, sensitiveRecognized: 14, sensitiveRemoved: 14 },
-        duration: 1800,
-      },
-      {
-        actionType: 'PLAN_ACTIONS',
-        status: 'planning',
-        description: 'Formulating step-by-step navigation and form completion plan',
-        statIncrement: { dataFound: 193, sensitiveRecognized: 8, sensitiveRemoved: 8 },
-        duration: 1600,
-      },
-      {
-        actionType: 'EXECUTE',
-        status: 'executing',
-        description: 'Interacting with page controls and validating operation results',
-        statIncrement: { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 },
-        duration: 2200,
-      },
-    ];
-
-    const step = mockPlan[stepIndex] || {
-      actionType: 'STEP_' + (stepIndex + 1),
-      status: 'executing',
-      description: `Executing action step ${stepIndex + 1}`,
-      statIncrement: { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 },
-      duration: 1500,
-    };
-
-    return {
-      stepIndex,
-      action: step.actionType,
-      status: step.status,
-      description: step.description,
-      statIncrement: step.statIncrement,
-      duration: step.duration,
-      isFinished: stepIndex >= mockPlan.length - 1,
-    };
+  async function fetchAgentAction(session, turnContext = {}) {
+    return await AgentBackendClient.postTurn({
+      sessionId: session.id,
+      taskGoal: session.task,
+      sanitizedDom: turnContext.sanitized_dom || [],
+      sanitizedScreenshotB64: turnContext.sanitized_screenshot_b64 || '',
+    });
   }
 
   // ─────────────────────────────────────────────────────────
@@ -373,9 +414,11 @@
     appendActionToSession,
     handlePageRefreshRecovery,
     fetchAgentAction,
+    AgentBackendClient,
   };
 
   // Expose on global window object
+  global.AgentBackendClient = AgentBackendClient;
   global.AgentSessionManager = AgentSessionManager;
   global.createSession = createSession;
   global.getSession = getSession;
@@ -384,3 +427,4 @@
   global.getAllSessions = getAllSessions;
 
 })(typeof window !== 'undefined' ? window : this);
+

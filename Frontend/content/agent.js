@@ -1,30 +1,14 @@
 /**
- * PrivSight — Content Script (agent.js)
+ * PrivSight — Unified Content Script (agent.js)
  *
- * Injected into every webpage the user visits.
- *
- * Responsibilities:
- *  1. Listen for START_AGENT / STOP_AGENT messages from popup.js.
- *  2. Inject a minimal, premium in-page overlay when the agent is active:
- *     - Thin electric-blue Aurora flowing around the viewport edges.
- *     - PrivSight shield logo centered with a soft glow/pulse.
- *     - Very subtle dark transparent overlay that locks the page without obscuring it.
- *  3. Remove the overlay and restore interactivity when the agent completes.
- *
- * The overlay is fully self-contained inside a Shadow DOM so it never
- * interferes with the host page's own CSS or JavaScript.
- *
- * HOW IT WORKS (for interviews):
- *  - When the popup sends { type: "START_AGENT" }, agent.js creates a
- *    <div id="privsight-overlay"> attached to <html>.
- *  - Inside that div, a Shadow Root is opened so PrivSight's CSS is
- *    perfectly isolated from the page's styles.
- *  - The host div uses inline styles (position:fixed, inset:0) so it
- *    reliably covers the viewport regardless of what the page's CSS does.
- *  - pointer-events: all on the shell absorbs every click before it
- *    reaches the page beneath, making the page non-interactive.
- *  - When { type: "STOP_AGENT" } arrives (or after a timeout), the
- *    overlay fades out and is removed, restoring full page interactivity.
+ * Integrates:
+ *  1. Premium Aurora viewport overlay & page lock
+ *  2. Local PII Scrubbing (DOMRedactor)
+ *  3. Interactive element mapping with stable data_hint markers
+ *  4. High-fidelity sanitized screenshot capture (html2canvas) with visual hint badges
+ *  5. On-device ONNX YuNet face redaction
+ *  6. Autonomous action executor (CLICK, TYPE, SCROLL)
+ *  7. User interactive pause/resume support for human-in-the-loop steps
  */
 
 (function () {
@@ -35,22 +19,35 @@
   }
   window.__PRIVSIGHT_AGENT_INJECTED__ = true;
 
-  // ─── State ─────────────────────────────────────────────
-  let overlayRoot = null;
-  let agentTimer  = null;
-  let isActive    = false;
+  const DEBUG = false;
+  const api = typeof browser !== 'undefined' ? browser : chrome;
 
-  // ─── Styles (injected into Shadow DOM) ─────────────────
+  // ─── Configuration & State ─────────────────────────────
+  const CONFIG = {
+    chars: '0123456789',
+    selectors: "a, button, input, textarea, select, [role='button'], [role='link'], [role='checkbox'], [tabindex]:not([tabindex='-1'])",
+    badgeClass: 'llm-hint-badge',
+  };
+
+  let activeHints = new Map();
+  let overlayRoot = null;
+  let agentTimer = null;
+  let isActive = false;
+
+  // ─── Styles (injected into Shadow DOM for Aurora Overlay) ─────────────────
   const OVERLAY_CSS = `
-    /* privsight-shell fills the host element which is already fixed */
     .privsight-shell {
       position: absolute;
       inset: 0;
       pointer-events: all;
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      transition: opacity 0.3s ease;
     }
 
-    /* ── Subtle dark veil ──────────────────────────────── */
+    .privsight-shell.interactive {
+      pointer-events: none !important;
+    }
+
     .veil {
       position: absolute;
       inset: 0;
@@ -58,6 +55,12 @@
       backdrop-filter: blur(0.5px);
       -webkit-backdrop-filter: blur(0.5px);
       animation: veil-in 0.55s ease-out both;
+      transition: opacity 0.3s ease;
+    }
+
+    .privsight-shell.interactive .veil {
+      opacity: 0 !important;
+      pointer-events: none;
     }
 
     @keyframes veil-in {
@@ -65,14 +68,12 @@
       to   { opacity: 1; }
     }
 
-    /* ── Aurora edges ──────────────────────────────────── */
     .aurora-edge {
       position: absolute;
       pointer-events: none;
       z-index: 10;
     }
 
-    /* Top edge */
     .aurora-top {
       top: 0; left: 0; right: 0;
       height: 3.5px;
@@ -90,7 +91,6 @@
       animation: aurora-h 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
 
-    /* Bottom edge */
     .aurora-bottom {
       bottom: 0; left: 0; right: 0;
       height: 3.5px;
@@ -109,7 +109,6 @@
       animation-delay: -1.3s;
     }
 
-    /* Left edge */
     .aurora-left {
       left: 0; top: 0; bottom: 0;
       width: 3.5px;
@@ -128,7 +127,6 @@
       animation-delay: -0.8s;
     }
 
-    /* Right edge */
     .aurora-right {
       right: 0; top: 0; bottom: 0;
       width: 3.5px;
@@ -147,7 +145,6 @@
       animation-delay: -2.1s;
     }
 
-    /* Corner glow accents */
     .aurora-corner {
       position: absolute;
       width: 120px;
@@ -179,7 +176,6 @@
       50%       { opacity: 1;   transform: scale(1.1); }
     }
 
-    /* ── Centre logo ───────────────────────────────────── */
     .logo-center {
       position: absolute;
       top: 50%;
@@ -191,6 +187,12 @@
       gap: 14px;
       animation: logo-rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
       animation-delay: 0.15s;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .privsight-shell.interactive .logo-center {
+      opacity: 0;
     }
 
     @keyframes logo-rise {
@@ -282,7 +284,6 @@
       50%       { opacity: 1;   }
     }
 
-    /* ── Fade-out transition ───────────────────────────── */
     .privsight-shell.leaving {
       animation: overlay-out 0.4s ease-in both;
       pointer-events: none !important;
@@ -294,76 +295,59 @@
     }
   `;
 
-  // ─── Build & Inject Overlay ─────────────────────────────
+  // ─── Build & Inject Aurora Overlay ─────────────────────────────
   function createOverlay() {
-    // Remove any stale overlay from a crashed previous run
     const stale = document.getElementById('privsight-overlay');
     if (stale) stale.remove();
 
     if (isActive) return;
     isActive = true;
 
-    // ── Host element ────────────────────────────────────────
-    // CRITICAL: inline styles are mandatory here.
-    // :host CSS inside the Shadow DOM does NOT reliably set position/size
-    // on all host pages — some pages apply CSS resets that override it.
-    // Inline styles are the highest specificity and cannot be overridden
-    // by any external stylesheet.
     const host = document.createElement('div');
     host.id = 'privsight-overlay';
     host.setAttribute('aria-hidden', 'true');
     Object.assign(host.style, {
-      position:      'fixed',
-      top:           '0',
-      left:          '0',
-      right:         '0',
-      bottom:        '0',
-      width:         '100vw',
-      height:        '100vh',
-      margin:        '0',
-      padding:       '0',
-      zIndex:        '2147483647',
+      position: 'fixed',
+      top: '0',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      width: '100vw',
+      height: '100vh',
+      margin: '0',
+      padding: '0',
+      zIndex: '2147483647',
       pointerEvents: 'all',
-      overflow:      'hidden',
-      display:       'block',
+      overflow: 'hidden',
+      display: 'block',
     });
 
-    // ── Shadow DOM ──────────────────────────────────────────
-    // Attach shadow root — every style inside here is 100% isolated
-    // from the host page. The page cannot see our styles and we cannot
-    // accidentally inherit theirs.
     const shadow = host.attachShadow({ mode: 'open' });
-
     const styleEl = document.createElement('style');
     styleEl.textContent = OVERLAY_CSS;
     shadow.appendChild(styleEl);
 
-    // ── Shell div ───────────────────────────────────────────
     const shell = document.createElement('div');
     shell.className = 'privsight-shell';
 
-    // Veil — subtle dark lock
     const veil = document.createElement('div');
     veil.className = 'veil';
     shell.appendChild(veil);
 
-    // Aurora edge bars
     ['aurora-edge aurora-top', 'aurora-edge aurora-bottom',
-     'aurora-edge aurora-left', 'aurora-edge aurora-right'].forEach(cls => {
+     'aurora-edge aurora-left', 'aurora-edge aurora-right'].forEach((cls) => {
       const el = document.createElement('div');
       el.className = cls;
       shell.appendChild(el);
     });
 
-    // Corner glow accents
     ['aurora-corner aurora-corner-tl', 'aurora-corner aurora-corner-tr',
-     'aurora-corner aurora-corner-bl', 'aurora-corner aurora-corner-br'].forEach(cls => {
+     'aurora-corner aurora-corner-bl', 'aurora-corner aurora-corner-br'].forEach((cls) => {
       const el = document.createElement('div');
       el.className = cls;
       shell.appendChild(el);
     });
 
-    // Centred logo
     const logoCenter = document.createElement('div');
     logoCenter.className = 'logo-center';
     logoCenter.innerHTML = `
@@ -383,78 +367,418 @@
       </span>
     `;
     shell.appendChild(logoCenter);
-
     shadow.appendChild(shell);
 
-    // Append to <html> not <body> — more reliable when the page's <body>
-    // has overflow:hidden, transform, or will-change (which create new
-    // stacking contexts that defeat position:fixed on child elements).
     (document.documentElement || document.body).appendChild(host);
     overlayRoot = { host, shell };
-
-    console.log('[PrivSight] Overlay active — page locked while agent works.');
   }
 
-  // ─── Remove Overlay (with fade-out) ────────────────────
+  function setOverlayInteractive(allowUserInteraction) {
+    if (!overlayRoot) return;
+    if (allowUserInteraction) {
+      overlayRoot.shell.classList.add('interactive');
+      overlayRoot.host.style.pointerEvents = 'none';
+    } else {
+      overlayRoot.shell.classList.remove('interactive');
+      overlayRoot.host.style.pointerEvents = 'all';
+    }
+  }
+
   function removeOverlay(immediate = false) {
     if (!overlayRoot) return;
-
     const { host, shell } = overlayRoot;
     isActive = false;
 
     if (immediate) {
       if (host.parentNode) host.parentNode.removeChild(host);
       overlayRoot = null;
-      console.log('[PrivSight] Overlay removed immediately.');
       return;
     }
 
-    // Trigger the fade-out CSS animation first
     shell.classList.add('leaving');
-
-    // Remove from DOM once animation finishes
     setTimeout(() => {
       if (host.parentNode) host.parentNode.removeChild(host);
       overlayRoot = null;
-      console.log('[PrivSight] Overlay removed — page restored.');
     }, 420);
   }
 
-  // ─── Message Handler ────────────────────────────────────
+  // ─── DOM Redactor & Sanitization Helpers ─────────────────
+  let redactorInstance = null;
+  function getRedactor() {
+    if (!redactorInstance && typeof DOMRedactor !== 'undefined') {
+      redactorInstance = new DOMRedactor({
+        redactTextNodes: true,
+        redactInputs: true,
+      });
+    }
+    return redactorInstance;
+  }
+
+  function generateHintString(index, chars) {
+    let hint = '';
+    let len = chars.length;
+    index += 1;
+    while (index > 0) {
+      index -= 1;
+      hint = chars[index % len] + hint;
+      index = Math.floor(index / len);
+    }
+    return hint;
+  }
+
+  async function createSanitizedIframe(sanitizedDoc) {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.left = '-100000px';
+    iframe.style.top = '0';
+    iframe.style.width = `${window.innerWidth}px`;
+    iframe.style.height = `${window.innerHeight}px`;
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    iframe.style.border = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+
+    document.documentElement.appendChild(iframe);
+    const iframeDoc = iframe.contentDocument;
+    if (!iframeDoc) {
+      iframe.remove();
+      throw new Error('Could not access sanitized iframe document.');
+    }
+
+    sanitizedDoc.querySelectorAll('script').forEach((s) => s.remove());
+    // Also remove any in-page overlay clone from iframe
+    const ov = sanitizedDoc.getElementById('privsight-overlay');
+    if (ov) ov.remove();
+
+    iframeDoc.replaceChild(
+      iframeDoc.importNode(sanitizedDoc.documentElement, true),
+      iframeDoc.documentElement
+    );
+
+    document.querySelectorAll("style, link[rel='stylesheet']").forEach((sheet) => {
+      try {
+        iframeDoc.head.appendChild(sheet.cloneNode(true));
+      } catch (_) {}
+    });
+
+    await new Promise((resolve) => {
+      if (iframeDoc.readyState === 'complete') {
+        resolve();
+      } else {
+        iframe.addEventListener('load', () => resolve(), { once: true });
+        setTimeout(resolve, 300);
+      }
+    });
+
+    try {
+      iframe.contentWindow.scrollTo(window.scrollX, window.scrollY);
+    } catch (_) {}
+
+    return iframe;
+  }
+
+  // ─── Capture & Hints Engine ─────────────────────────────
+  async function capturePage() {
+    activeHints.clear();
+    const redactor = getRedactor();
+
+    // 1. Locate visible interactive elements on the real page
+    const orgElements = Array.from(document.querySelectorAll(CONFIG.selectors)).filter((el) => {
+      if (el.closest('#privsight-overlay')) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.visibility !== 'hidden' &&
+        style.display !== 'none' &&
+        style.opacity !== '0'
+      );
+    });
+
+    let sanitizedIframe = null;
+    try {
+      let sanitizedDoc = document;
+      let scrubbingStats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
+
+      if (redactor) {
+        const scrubbed = await redactor.sanitize(document);
+        sanitizedDoc = scrubbed.doc;
+        const s = scrubbed.stats || {};
+        let sensitiveCount = 0;
+        Object.keys(s).forEach((k) => {
+          if (typeof s[k] === 'number') sensitiveCount += s[k];
+        });
+        scrubbingStats = {
+          dataFound: orgElements.length * 8 + sensitiveCount,
+          sensitiveRecognized: sensitiveCount,
+          sensitiveRemoved: sensitiveCount,
+        };
+      }
+
+      sanitizedIframe = await createSanitizedIframe(sanitizedDoc);
+      const iframeDoc = sanitizedIframe.contentDocument;
+      if (!iframeDoc) {
+        throw new Error('Sanitized iframe document unavailable.');
+      }
+
+      iframeDoc.querySelectorAll('img').forEach((img) => {
+        if (img.loading === 'lazy') img.loading = 'eager';
+      });
+
+      const sanitizedElements = Array.from(iframeDoc.querySelectorAll(CONFIG.selectors)).filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+
+      const sanitizedDom = [];
+      const badgeData = [];
+
+      orgElements.forEach((orgEl, index) => {
+        const hint = String(index);
+        activeHints.set(hint, orgEl);
+        orgEl.setAttribute('data-hint', hint);
+
+        const sEl = sanitizedElements[index] || orgEl;
+        try {
+          sEl.setAttribute('data-hint', hint);
+        } catch (_) {}
+
+        const rect = sEl.getBoundingClientRect();
+        badgeData.push({
+          text: hint,
+          top: Math.max(0, rect.top),
+          left: Math.max(0, rect.left),
+        });
+
+        // Send only data_hint and tag to minimize payload size for LLM context window
+        sanitizedDom.push({
+          data_hint: hint,
+          tag: orgEl.tagName ? orgEl.tagName.toLowerCase() : 'div',
+        });
+      });
+
+      // 2. Render screenshot via html2canvas
+      let screenshotB64 = '';
+      if (typeof html2canvas !== 'undefined') {
+        const canvas = await html2canvas(iframeDoc.body, {
+          x: window.scrollX,
+          y: window.scrollY,
+          width: window.innerWidth,
+          height: window.innerHeight,
+          windowWidth: window.innerWidth,
+          windowHeight: window.innerHeight,
+          scale: 1,
+          useCORS: true,
+          logging: false,
+        });
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          badgeData.forEach((badge) => {
+            const pad = 4;
+            ctx.font = 'bold 10px sans-serif';
+            const metrics = ctx.measureText(badge.text);
+            const boxW = Math.max(16, metrics.width + pad * 2);
+            const boxH = 14;
+
+            ctx.fillStyle = '#ffeb3b';
+            ctx.strokeStyle = '#f57f17';
+            ctx.lineWidth = 1;
+            ctx.fillRect(badge.left, badge.top, boxW, boxH);
+            ctx.strokeRect(badge.left, badge.top, boxW, boxH);
+
+            ctx.fillStyle = '#000000';
+            ctx.fillText(badge.text, badge.left + pad, badge.top + 10);
+          });
+        }
+
+        const dataUrl = canvas.toDataURL('image/png');
+        let processedDataUrl = dataUrl;
+
+        // 3. Redact faces on screenshot using YuNet ONNX
+        if (typeof window.faceRedaction === 'function') {
+          try {
+            processedDataUrl = await window.faceRedaction(dataUrl);
+          } catch (e) {
+            console.warn('[PrivSight] Face redaction pass:', e);
+          }
+        }
+
+        screenshotB64 = processedDataUrl.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+      }
+
+      return {
+        sanitized_dom: sanitizedDom,
+        sanitized_screenshot_b64: screenshotB64,
+        stats: scrubbingStats,
+      };
+    } finally {
+      if (sanitizedIframe) sanitizedIframe.remove();
+    }
+  }
+
+  // ─── Action Executor Engine ─────────────────────────────
+  function findElement(dataHint, elementId) {
+    if (dataHint && activeHints.has(String(dataHint))) {
+      return activeHints.get(String(dataHint));
+    }
+    if (dataHint) {
+      const el = document.querySelector(`[data-hint="${dataHint}"]`);
+      if (el) return el;
+    }
+    if (elementId) {
+      const el = document.getElementById(elementId);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  async function executeAction(action) {
+    if (!action || !action.type) {
+      throw new Error('Invalid action payload: action.type is required');
+    }
+
+    const type = action.type.toUpperCase();
+    console.log(`[PrivSight Executor] Executing action: ${type}`, action);
+
+    switch (type) {
+      case 'CLICK': {
+        const el = findElement(action.data_hint, action.element_id);
+        if (!el) {
+          throw new Error(`Target element not found for CLICK (hint: ${action.data_hint}, id: ${action.element_id})`);
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await new Promise((r) => setTimeout(r, 200));
+
+        // Dispatch full mouse event sequence for web frameworks (React, Angular, etc.)
+        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        el.focus();
+        el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        el.click();
+        break;
+      }
+
+      case 'TYPE': {
+        const el = findElement(action.data_hint, action.element_id);
+        if (!el) {
+          throw new Error(`Target element not found for TYPE (hint: ${action.data_hint}, id: ${action.element_id})`);
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+
+        const textToType = action.text || '';
+
+        // React / modern SPA input value setter compatibility
+        const valuePrototype = el instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+        const nativeInputSetter = Object.getOwnPropertyDescriptor(valuePrototype, 'value')?.set;
+
+        if (nativeInputSetter) {
+          nativeInputSetter.call(el, textToType);
+        } else {
+          el.value = textToType;
+        }
+
+        // Update the element attribute so subsequent scans read the updated value
+        el.setAttribute('value', textToType);
+
+        el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        break;
+      }
+
+      case 'SCROLL': {
+        // Default to scrolling down one viewport
+        window.scrollBy({
+          top: window.innerHeight * 0.85,
+          left: 0,
+          behavior: 'smooth',
+        });
+        await new Promise((r) => setTimeout(r, 400));
+        break;
+      }
+
+      default:
+        console.warn(`[PrivSight Executor] Unhandled action type: ${type}`);
+    }
+
+    // Allow browser layout and DOM mutation observers to settle
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true, actionType: type };
+  }
+
+  // ─── Chrome Message Handlers ─────────────────────────────
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-
+    // 1. Overlay & Page Lock Controls
     if (message.type === 'START_AGENT') {
-      console.log('[PrivSight] Agent started — Task:', message.prompt);
       createOverlay();
-
-      // Safety timeout: auto-remove after 35s even if popup never sends STOP_AGENT
       clearTimeout(agentTimer);
       agentTimer = setTimeout(() => {
-        console.warn('[PrivSight] Safety timeout — removing overlay after 35s.');
         removeOverlay();
-      }, 35_000);
-
+      }, 90_000);
       sendResponse({ ok: true, status: 'overlay_active' });
+      return true;
     }
 
     if (message.type === 'STOP_AGENT') {
-      console.log('[PrivSight] Agent stopped.');
       clearTimeout(agentTimer);
       removeOverlay(message.immediate || false);
       sendResponse({ ok: true, status: 'overlay_removed' });
+      return true;
     }
 
-    return true; // keep message channel open for async sendResponse
+    // 2. Human-in-the-loop pause / resume
+    if (message.type === 'PAUSE_USER_MODE') {
+      setOverlayInteractive(true);
+      sendResponse({ ok: true, status: 'interactive_paused' });
+      return true;
+    }
+
+    if (message.type === 'RESUME_AGENT_MODE') {
+      setOverlayInteractive(false);
+      sendResponse({ ok: true, status: 'interactive_resumed' });
+      return true;
+    }
+
+    // 3. Capture Page State (Sanitized DOM + Screenshot)
+    if (message.type === 'CAPTURE_STATE' || message.action === 'TRIGGER_CAPTURE') {
+      capturePage()
+        .then((result) => {
+          sendResponse({ ok: true, data: result });
+        })
+        .catch((err) => {
+          console.error('[PrivSight] Capture error:', err);
+          sendResponse({ ok: false, error: err.message });
+        });
+      return true;
+    }
+
+    // 4. Action Execution
+    if (message.type === 'EXECUTE_ACTION') {
+      executeAction(message.action)
+        .then((res) => sendResponse({ ok: true, result: res }))
+        .catch((err) => {
+          console.error('[PrivSight] Execution error:', err);
+          sendResponse({ ok: false, error: err.message });
+        });
+      return true;
+    }
+
+    return true;
   });
 
-  // ─── Cleanup on page navigation ─────────────────────────
   window.addEventListener('pagehide', () => {
     clearTimeout(agentTimer);
     if (overlayRoot && overlayRoot.host.parentNode) {
       overlayRoot.host.parentNode.removeChild(overlayRoot.host);
     }
     overlayRoot = null;
-    isActive    = false;
+    isActive = false;
   });
 
+  console.log('[PrivSight] Unified content agent initialized.');
 })();

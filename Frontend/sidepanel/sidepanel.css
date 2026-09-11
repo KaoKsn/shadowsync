@@ -657,3 +657,80 @@ body::after {
    UTILITIES
    ══════════════════════════════════════════════════════════════ */
 .hidden { display: none !important; }
+
+/* ── Human-in-the-loop User Action Prompt ─────────────────── */
+.ps-user-prompt {
+  margin: 10px 14px;
+  padding: 12px 14px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  animation: prompt-in 0.3s ease-out;
+}
+
+@keyframes prompt-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ps-user-prompt__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ps-user-prompt__badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #f59e0b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ps-user-prompt__text {
+  font-size: 13px;
+  color: var(--t1);
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.ps-user-prompt__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ps-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition);
+}
+
+.ps-btn--primary {
+  background: var(--accent);
+  color: #050b14;
+}
+
+.ps-btn--primary:hover {
+  background: #7dd3fc;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.ps-btn--secondary {
+  background: var(--g3);
+  color: var(--t2);
+  border: 1px solid var(--gb);
+}
+
+.ps-btn--secondary:hover {
+  background: var(--g4);
+  color: var(--t1);
+}
