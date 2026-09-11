@@ -1,4 +1,0 @@
-uvicorn
-pydantic
-typing
-fastapi
