@@ -1,2 +1,0 @@
-# shadowsync
-SIH'26

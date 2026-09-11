@@ -1,0 +1,386 @@
+/**
+ * PrivSight — Agent Session Management Layer (session.js)
+ *
+ * Responsibilities:
+ *  1. Create, read, update, delete agent sessions stored in browser localStorage.
+ *  2. Provide a single source of truth under the "agentSessions" key.
+ *  3. Persist session state, prompts, status, and generated actions in real time.
+ *  4. Serve as the modular abstraction layer between the UI and backend execution,
+ *     making it easy to swap localStorage for remote API persistence in the future.
+ *  5. Isolate the backend communication placeholder so real backend API endpoints
+ *     can be plugged in without touching UI logic.
+ */
+
+(function (global) {
+  'use strict';
+
+  const SESSIONS_STORAGE_KEY = 'agentSessions';
+  const CURRENT_SESSION_ID_KEY = 'agentCurrentSessionId';
+
+  // Valid session statuses
+  const SessionStatus = Object.freeze({
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    STOPPED: 'stopped',
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // Helper: LocalStorage Access with Safe JSON Parsing
+  // ─────────────────────────────────────────────────────────
+
+  function getStorageData(key, defaultValue = null) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return defaultValue;
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[PrivSight Session] Failed to parse localStorage for key "${key}":`, err);
+      return defaultValue;
+    }
+  }
+
+  function setStorageData(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (err) {
+      console.error(`[PrivSight Session] Failed to save to localStorage for key "${key}":`, err);
+      return false;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Core Session CRUD Helpers
+  // ─────────────────────────────────────────────────────────
+
+  /**
+   * Retrieves all sessions from localStorage.
+   * @returns {Array<Object>} List of all session objects
+   */
+  function getAllSessions() {
+    const sessions = getStorageData(SESSIONS_STORAGE_KEY, []);
+    return Array.isArray(sessions) ? sessions : [];
+  }
+
+  /**
+   * Retrieves a specific session by its UUID.
+   * @param {string} id - The UUID of the session
+   * @returns {Object|null} The session object or null if not found
+   */
+  function getSession(id) {
+    if (!id) return null;
+    const sessions = getAllSessions();
+    return sessions.find((s) => s.id === id) || null;
+  }
+
+  /**
+   * Creates a new session, persists it to localStorage, and sets it as current.
+   * @param {string} task - The prompt / task entered by the user
+   * @param {Object} [metadata] - Optional initial metadata (e.g. domain, tabId)
+   * @returns {Object} The newly created session object
+   */
+  function createSession(task, metadata = {}) {
+    const id = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+    const now = new Date().toISOString();
+
+    const newSession = {
+      id,
+      task: typeof task === 'string' ? task.trim() : '',
+      status: SessionStatus.RUNNING,
+      actions: [],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        ...metadata,
+      },
+    };
+
+    const sessions = getAllSessions();
+    sessions.push(newSession);
+    setStorageData(SESSIONS_STORAGE_KEY, sessions);
+    setCurrentSessionId(id);
+
+    console.debug(`[PrivSight Session] Created session "${id}" for task: "${newSession.task}"`);
+    return newSession;
+  }
+
+  /**
+   * Updates an existing session by ID with new data.
+   * @param {string} id - The UUID of the session
+   * @param {Object} data - Partial session properties to update
+   * @returns {Object|null} The updated session object or null if not found
+   */
+  function updateSession(id, data) {
+    if (!id || !data) return null;
+    const sessions = getAllSessions();
+    const index = sessions.findIndex((s) => s.id === id);
+    if (index === -1) {
+      console.warn(`[PrivSight Session] Cannot update: session "${id}" not found.`);
+      return null;
+    }
+
+    const current = sessions[index];
+    const now = new Date().toISOString();
+
+    const updated = {
+      ...current,
+      ...data,
+      metadata: {
+        ...(current.metadata || {}),
+        ...(data.metadata || {}),
+        updatedAt: now,
+      },
+    };
+
+    // If status changed to a completed/terminal state, set finishedAt
+    if (
+      data.status &&
+      data.status !== SessionStatus.RUNNING &&
+      !updated.metadata.finishedAt
+    ) {
+      updated.metadata.finishedAt = now;
+    }
+
+    sessions[index] = updated;
+    setStorageData(SESSIONS_STORAGE_KEY, sessions);
+
+    return updated;
+  }
+
+  /**
+   * Appends an agent action / response to a session's actions array.
+   * @param {string} id - The session UUID
+   * @param {Object} action - Action details generated by the agent or backend
+   * @returns {Object|null} The updated session or null
+   */
+  function appendActionToSession(id, action) {
+    if (!id || !action) return null;
+    const session = getSession(id);
+    if (!session) return null;
+
+    const actionWithMeta = {
+      id: typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'act_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      timestamp: new Date().toISOString(),
+      ...action,
+    };
+
+    const nextActions = [...(session.actions || []), actionWithMeta];
+    return updateSession(id, { actions: nextActions });
+  }
+
+  /**
+   * Deletes a session by ID from localStorage.
+   * @param {string} id - The UUID of the session
+   * @returns {boolean} True if deleted, false otherwise
+   */
+  function deleteSession(id) {
+    if (!id) return false;
+    const sessions = getAllSessions();
+    const filtered = sessions.filter((s) => s.id !== id);
+    if (filtered.length === sessions.length) return false;
+
+    setStorageData(SESSIONS_STORAGE_KEY, filtered);
+
+    if (getCurrentSessionId() === id) {
+      localStorage.removeItem(CURRENT_SESSION_ID_KEY);
+    }
+    return true;
+  }
+
+  /**
+   * Gets the active session ID.
+   * @returns {string|null}
+   */
+  function getCurrentSessionId() {
+    return localStorage.getItem(CURRENT_SESSION_ID_KEY) || null;
+  }
+
+  /**
+   * Sets the active session ID.
+   * @param {string|null} id
+   */
+  function setCurrentSessionId(id) {
+    if (id) {
+      localStorage.setItem(CURRENT_SESSION_ID_KEY, id);
+    } else {
+      localStorage.removeItem(CURRENT_SESSION_ID_KEY);
+    }
+  }
+
+  /**
+   * Retrieves the currently active session object from localStorage.
+   * @returns {Object|null}
+   */
+  function getCurrentSession() {
+    const currentId = getCurrentSessionId();
+    return currentId ? getSession(currentId) : null;
+  }
+
+  /**
+   * Handles cases where the page/panel is refreshed while a session is active.
+   * Checks if any sessions were left in 'running' state and updates them to 'stopped'.
+   */
+  function handlePageRefreshRecovery() {
+    const sessions = getAllSessions();
+    let hasChanges = false;
+    const now = new Date().toISOString();
+
+    const recovered = sessions.map((s) => {
+      if (s.status === SessionStatus.RUNNING) {
+        hasChanges = true;
+        return {
+          ...s,
+          status: SessionStatus.STOPPED,
+          metadata: {
+            ...(s.metadata || {}),
+            updatedAt: now,
+            finishedAt: now,
+            interruptedByReload: true,
+          },
+        };
+      }
+      return s;
+    });
+
+    if (hasChanges) {
+      setStorageData(SESSIONS_STORAGE_KEY, recovered);
+      console.info('[PrivSight Session] Recovered from reload: marked interrupted sessions as stopped.');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Backend Communication Placeholder
+  // ─────────────────────────────────────────────────────────
+
+  /**
+   * Placeholder function to call the backend agent API.
+   * Replace this implementation when connecting the real backend server.
+   *
+   * @param {Object} session - The active session object
+   * @param {number} stepIndex - Current step index
+   * @param {Object} [context] - Context data (e.g. current URL, page state, privacy counters)
+   * @returns {Promise<Object>} Agent action/response from backend
+   */
+  async function fetchAgentAction(session, stepIndex, context = {}) {
+    // ═════════════════════════════════════════════════════════
+    // Real Backend Integration Pattern (Ready for backend):
+    // ═════════════════════════════════════════════════════════
+    // const response = await fetch('http://127.0.0.1:8000/api/agent/step', {
+    //   method: 'POST',
+    //   headers: {
+    //     'Content-Type': 'application/json',
+    //     'X-Session-ID': session.id,
+    //   },
+    //   body: JSON.stringify({
+    //     sessionId: session.id,
+    //     task: session.task,
+    //     stepIndex: stepIndex,
+    //     context: context,
+    //   }),
+    // });
+    // if (!response.ok) {
+    //   throw new Error(`Agent backend returned error: ${response.status}`);
+    // }
+    // return await response.json();
+
+    // ═════════════════════════════════════════════════════════
+    // Local Simulation Placeholder:
+    // ═════════════════════════════════════════════════════════
+    const mockPlan = [
+      {
+        actionType: 'CONNECT',
+        status: 'connecting',
+        description: 'Connecting to privacy-preserving broker and initializing environment',
+        statIncrement: { dataFound: 412, sensitiveRecognized: 0, sensitiveRemoved: 0 },
+        duration: 1500,
+      },
+      {
+        actionType: 'SCAN_DOM',
+        status: 'reading_page',
+        description: 'Reading DOM structure and inspecting page input fields',
+        statIncrement: { dataFound: 938, sensitiveRecognized: 0, sensitiveRemoved: 0 },
+        duration: 1800,
+      },
+      {
+        actionType: 'SANITIZE_DATA',
+        status: 'protecting_data',
+        description: 'Masking sensitive identifiers, credentials, and personal information',
+        statIncrement: { dataFound: 0, sensitiveRecognized: 31, sensitiveRemoved: 31 },
+        duration: 2000,
+      },
+      {
+        actionType: 'UNDERSTAND_CONTEXT',
+        status: 'understanding_page',
+        description: 'Building sanitized comprehension representation for agent decision model',
+        statIncrement: { dataFound: 518, sensitiveRecognized: 14, sensitiveRemoved: 14 },
+        duration: 1800,
+      },
+      {
+        actionType: 'PLAN_ACTIONS',
+        status: 'planning',
+        description: 'Formulating step-by-step navigation and form completion plan',
+        statIncrement: { dataFound: 193, sensitiveRecognized: 8, sensitiveRemoved: 8 },
+        duration: 1600,
+      },
+      {
+        actionType: 'EXECUTE',
+        status: 'executing',
+        description: 'Interacting with page controls and validating operation results',
+        statIncrement: { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 },
+        duration: 2200,
+      },
+    ];
+
+    const step = mockPlan[stepIndex] || {
+      actionType: 'STEP_' + (stepIndex + 1),
+      status: 'executing',
+      description: `Executing action step ${stepIndex + 1}`,
+      statIncrement: { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 },
+      duration: 1500,
+    };
+
+    return {
+      stepIndex,
+      action: step.actionType,
+      status: step.status,
+      description: step.description,
+      statIncrement: step.statIncrement,
+      duration: step.duration,
+      isFinished: stepIndex >= mockPlan.length - 1,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Export Public Interface
+  // ─────────────────────────────────────────────────────────
+
+  const AgentSessionManager = {
+    SessionStatus,
+    getAllSessions,
+    getSession,
+    createSession,
+    updateSession,
+    deleteSession,
+    getCurrentSession,
+    getCurrentSessionId,
+    setCurrentSessionId,
+    appendActionToSession,
+    handlePageRefreshRecovery,
+    fetchAgentAction,
+  };
+
+  // Expose on global window object
+  global.AgentSessionManager = AgentSessionManager;
+  global.createSession = createSession;
+  global.getSession = getSession;
+  global.updateSession = updateSession;
+  global.deleteSession = deleteSession;
+  global.getAllSessions = getAllSessions;
+
+})(typeof window !== 'undefined' ? window : this);
