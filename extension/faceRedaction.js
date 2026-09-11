@@ -1,181 +1,38 @@
 /**
- * faceRedaction.js
+ * faceRedaction.js (onnxruntime-web version)
  *
- * Detects faces in a base64-encoded image using OpenCV.js's built-in
- * YuNet detector (cv.FaceDetectorYN) and returns a new base64-encoded
- * image with all detected faces fully redacted (blacked out).
+ * Drop-in replacement for the OpenCV.js-based faceRedaction.js.
+ * Same public API: window.faceRedaction(base64Image, options) -> Promise<string>
+ * content.js does NOT need to change.
  *
- * Why OpenCV.js + YuNet instead of a hand-rolled ONNX decode:
- * YuNet's raw ONNX output (cls_8/16/32, obj_8/16/32, bbox_8/16/32,
- * kps_8/16/32) has no publicly documented decode formula outside of
- * OpenCV's own C++ source. OpenCV.js is OpenCV compiled to WASM, so
- * cv.FaceDetectorYN runs the *real*, verified decode/NMS logic
- * instead of a reimplementation that could silently produce wrong
- * boxes.
+ * Requires ort (onnxruntime-web UMD/global build) to be loaded BEFORE
+ * this script — add ort.wasm.min.js to content_scripts, before this file.
  *
- * Requires the YuNet ONNX model file to be next to this file by default:
- *      https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+ * Confirmed via Netron:
+ *   input:  float32[1,3,640,640]
+ *   outputs: cls_8/16/32 [1,N,1], obj_8/16/32 [1,N,1],
+ *            bbox_8/16/32 [1,N,4], kps_8/16/32 [1,N,10]
  *
- * Usage:
- *   const redactedBase64 = await faceRedaction(base64Image);
- *
- * `base64Image` may be a raw base64 string OR a full data URL
- * (e.g. "data:image/png;base64,....").
- * The returned string has the same format as the input (data URL in,
- * data URL out; raw base64 in, raw base64 out).
+ * NOTE ON CORRECTNESS: the decode formula below (score = sqrt(cls*obj),
+ * box regression scaled by stride) is a best-effort port of YuNet's
+ * published anchor-free architecture, NOT verified line-by-line against
+ * OpenCV's C++ source. VALIDATE on a test image with a known face
+ * before trusting this for redaction (see bottom of this file).
  */
 
 (function (global) {
-  let detector = null;
-  let modelBytesPromise = null;
-  let cvReadyPromise = null;
-  let detectorPromise = null;
+  const STRIDES = [8, 16, 32];
+  const INPUT_SIZE = 640;
+  const SCORE_THRESHOLD = 0.6;
+  const NMS_THRESHOLD = 0.3;
+  const TOP_K = 50;
 
-  // Get the ONNX model from the extension package.
+  let sessionPromise = null;
+
   const defaultModelUrl = chrome.runtime.getURL(
     "face_detection_yunet_2023mar.onnx",
   );
 
-  /**
-   * Resolves once OpenCV.js has finished loading its WASM runtime.
-   * OpenCV.js exposes `cv.onRuntimeInitialized` for this; if `cv` is
-   * already fully initialized (e.g. cv.Mat exists) it resolves immediately.
-   */
-
-  function waitForOpenCv() {
-    if (!cvReadyPromise) {
-      cvReadyPromise = new Promise((resolve, reject) => {
-        const startedAt = Date.now();
-
-        const check = () => {
-          if (typeof cv !== "undefined") {
-            if (cv.Mat && cv.FaceDetectorYN) {
-              resolve();
-              return;
-            }
-
-            if (Date.now() - startedAt > 30000) {
-              reject(
-                new Error("OpenCV loaded, but FaceDetectorYN is unavailable."),
-              );
-              return;
-            }
-          } else if (Date.now() - startedAt > 30000) {
-            reject(new Error("OpenCV.js was not loaded."));
-            return;
-          }
-
-          setTimeout(check, 50);
-        };
-
-        check();
-      });
-    }
-
-    return cvReadyPromise;
-  }
-
-  /*
-  function waitForOpenCv() {
-    if (!cvReadyPromise) {
-      cvReadyPromise = new Promise((resolve, reject) => {
-        loadOpenCvScript();
-        const startedAt = Date.now();
-        const check = () => {
-          if (typeof cv !== "undefined" && cv.Mat) {
-            resolve();
-          } else if (Date.now() - startedAt > 30000) {
-            reject(
-              new Error("OpenCV.js did not finish loading within 30 seconds."),
-            );
-          } else {
-            setTimeout(check, 50);
-          }
-        };
-        check();
-      });
-    }
-    return cvReadyPromise;
-  }
-
-*/
-  // Use the model that has been bundled with the extension.
-  function fetchModelBytes(modelUrl) {
-    if (!modelBytesPromise) {
-      modelBytesPromise = fetch(modelUrl)
-        .then((res) => {
-          if (!res.ok) {
-            throw new Error(
-              `Failed to fetch YuNet model at ${modelUrl} (HTTP ${res.status})`,
-            );
-          }
-          return res.arrayBuffer();
-        })
-        .then((buf) => new Uint8Array(buf));
-    }
-    return modelBytesPromise;
-  }
-
-  /**
-   * Initializes OpenCV.js and loads the YuNet model. Must be called
-   * once (e.g. on extension/app startup) before run(). Safe to call
-   * multiple times — subsequent calls reuse the cached detector.
-   *
-   * @param {string} modelUrl - URL/path to face_detection_yunet_2023mar.onnx
-   *   (bundle this file locally; don't fetch it from GitHub at runtime).
-   * @param {Object} [options]
-   * @param {number} [options.scoreThreshold=0.9] - Min confidence to keep a detection.
-   * @param {number} [options.nmsThreshold=0.3] - IoU threshold for non-max suppression.
-   * @param {number} [options.topK=5000] - Max candidate boxes kept before NMS.
-   */
-  async function init(modelUrl = defaultModelUrl, options = {}) {
-    const { scoreThreshold = 0.9, nmsThreshold = 0.3, topK = 5000 } = options;
-
-    await waitForOpenCv();
-    const modelBytes = await fetchModelBytes(modelUrl);
-
-    // Write the model into OpenCV.js's virtual filesystem so
-    // FaceDetectorYN.create() (which takes a path, not raw bytes) can read it.
-    const fsPath = "/yunet_model.onnx";
-    if (cv.FS_analyzePath(fsPath).exists) {
-      cv.FS_unlink(fsPath);
-    }
-    cv.FS_createDataFile(
-      "/",
-      "yunet_model.onnx",
-      modelBytes,
-      true,
-      false,
-      false,
-    );
-
-    if (detector) {
-      detector.delete();
-    }
-
-    // inputSize is set per-image in run(); a placeholder here is fine.
-    detector = new cv.FaceDetectorYN(
-      fsPath,
-      "",
-      new cv.Size(320, 320),
-      scoreThreshold,
-      nmsThreshold,
-      topK,
-    );
-
-    return detector;
-  }
-
-  /**
-   * Normalizes input into { prefix } where `prefix` is the
-   * "data:image/...;base64," part (empty string if not present).
-   */
-  function splitDataUrl(input) {
-    const match = /^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/.exec(input);
-    return match ? { prefix: `data:${match[1]};base64,` } : { prefix: "" };
-  }
-
-  /** Loads a base64 (or data URL) string into an HTMLImageElement. */
   function loadImage(base64OrDataUrl) {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -188,83 +45,151 @@
     });
   }
 
-  /**
-   * Redacts (fully blacks out) all detected faces in the given base64
-   * image using OpenCV.js's YuNet detector. OpenCV.js and the model are
-   * loaded automatically on the first call.
-   *
-   * @param {string} base64Image - Raw base64 string or data URL of the image.
-   * @param {Object} [options]
-   * @param {number} [options.padding=0] - Extra pixels to expand each face box by.
-   * @param {string} [options.modelUrl] - Optional override for the adjacent ONNX model.
-   * @param {string} [options.outputMimeType="image/png"] - MIME type for the output image.
-   * @param {number} [options.outputQuality=0.92] - Quality for lossy formats (e.g. image/jpeg).
-   * @returns {Promise<string>} Base64 (or data URL, matching input format) of the redacted image.
-   */
-  async function run(base64Image, options = {}) {
-    if (!base64Image || typeof base64Image !== "string") {
-      throw new Error(
-        "faceRedaction.run: base64Image must be a non-empty string.",
-      );
+  function splitDataUrl(input) {
+    const match = /^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/.exec(input);
+    return match ? { prefix: `data:${match[1]};base64,` } : { prefix: "" };
+  }
+
+  async function getSession(modelUrl) {
+    if (!sessionPromise) {
+      ort.env.wasm.proxy = false;
+      sessionPromise = ort.InferenceSession.create(modelUrl || defaultModelUrl, {
+        executionProviders: ["wasm"],
+        graphOptimizationLevel: "all",
+      });
     }
-    if (!detector) {
-      if (!detectorPromise) {
-        detectorPromise = init(options.modelUrl, options).catch((error) => {
-          detectorPromise = null;
-          throw error;
-        });
-      }
-      await detectorPromise;
+    return sessionPromise;
+  }
+
+  // Resize the source canvas into a 640x640 BGR CHW float32 tensor.
+  function preprocess(sourceCanvas) {
+    const offscreen = document.createElement("canvas");
+    offscreen.width = INPUT_SIZE;
+    offscreen.height = INPUT_SIZE;
+    const ctx = offscreen.getContext("2d");
+    ctx.drawImage(sourceCanvas, 0, 0, INPUT_SIZE, INPUT_SIZE);
+
+    const { data } = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+    const planeSize = INPUT_SIZE * INPUT_SIZE;
+    const chw = new Float32Array(3 * planeSize);
+
+    for (let i = 0; i < planeSize; i++) {
+      const r = data[i * 4 + 0];
+      const g = data[i * 4 + 1];
+      const b = data[i * 4 + 2];
+      chw[i] = b;
+      chw[planeSize + i] = g;
+      chw[2 * planeSize + i] = r;
     }
 
-    const {
-      padding = 0,
-      outputMimeType = "image/png",
-      outputQuality = 0.92,
-    } = options;
+    const tensor = new ort.Tensor("float32", chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    return {
+      tensor,
+      scaleX: sourceCanvas.width / INPUT_SIZE,
+      scaleY: sourceCanvas.height / INPUT_SIZE,
+    };
+  }
+
+  function iou(a, b) {
+    const x1 = Math.max(a.x, b.x);
+    const y1 = Math.max(a.y, b.y);
+    const x2 = Math.min(a.x + a.width, b.x + b.width);
+    const y2 = Math.min(a.y + a.height, b.y + b.height);
+    const interW = Math.max(0, x2 - x1);
+    const interH = Math.max(0, y2 - y1);
+    const interArea = interW * interH;
+    const areaA = a.width * a.height;
+    const areaB = b.width * b.height;
+    return interArea / (areaA + areaB - interArea);
+  }
+
+  function nms(boxes, threshold) {
+    const sorted = [...boxes].sort((a, b) => b.score - a.score);
+    const keep = [];
+    while (sorted.length > 0) {
+      const current = sorted.shift();
+      keep.push(current);
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        if (iou(current, sorted[i]) > threshold) sorted.splice(i, 1);
+      }
+    }
+    return keep;
+  }
+
+  function decode(outputs, scaleX, scaleY) {
+    const candidates = [];
+
+    for (const stride of STRIDES) {
+      const cls = outputs[`cls_${stride}`].data;
+      const obj = outputs[`obj_${stride}`].data;
+      const bbox = outputs[`bbox_${stride}`].data;
+
+      const featSize = INPUT_SIZE / stride;
+      let idx = 0;
+
+      for (let row = 0; row < featSize; row++) {
+        for (let col = 0; col < featSize; col++, idx++) {
+          const clsScore = Math.min(Math.max(cls[idx], 0), 1);
+          const objScore = Math.min(Math.max(obj[idx], 0), 1);
+          const score = Math.sqrt(clsScore * objScore);
+          if (score < SCORE_THRESHOLD) continue;
+
+          const priorCx = (col + 0.5) * stride;
+          const priorCy = (row + 0.5) * stride;
+
+          const dx = bbox[idx * 4 + 0];
+          const dy = bbox[idx * 4 + 1];
+          const dw = bbox[idx * 4 + 2];
+          const dh = bbox[idx * 4 + 3];
+
+          const cx = priorCx + dx * stride;
+          const cy = priorCy + dy * stride;
+          const w = Math.exp(dw) * stride;
+          const h = Math.exp(dh) * stride;
+
+          candidates.push({
+            x: (cx - w / 2) * scaleX,
+            y: (cy - h / 2) * scaleY,
+            width: w * scaleX,
+            height: h * scaleY,
+            score,
+          });
+        }
+      }
+    }
+
+    return nms(candidates, NMS_THRESHOLD).slice(0, TOP_K);
+  }
+
+  async function run(base64Image, options = {}) {
+    if (!base64Image || typeof base64Image !== "string") {
+      throw new Error("faceRedaction: base64Image must be a non-empty string.");
+    }
+
+    const { padding = 0, outputMimeType = "image/png", outputQuality = 0.92 } = options;
     const { prefix } = splitDataUrl(base64Image);
     const isDataUrl = prefix !== "";
 
+    const session = await getSession(options.modelUrl);
     const img = await loadImage(base64Image);
 
-    // Draw onto a canvas so we can get pixel data for OpenCV and later
-    // re-export the redacted result.
     const canvas = document.createElement("canvas");
     canvas.width = img.naturalWidth || img.width;
     canvas.height = img.naturalHeight || img.height;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-    const rgbaMat = cv.imread(canvas);
-    const srcMat = new cv.Mat();
-    cv.cvtColor(rgbaMat, srcMat, cv.COLOR_RGBA2RGB);
-    rgbaMat.delete();
-    let facesMat = null;
-    try {
-      detector.setInputSize(new cv.Size(canvas.width, canvas.height));
+    const { tensor, scaleX, scaleY } = preprocess(canvas);
+    const outputs = await session.run({ input: tensor });
+    const faces = decode(outputs, scaleX, scaleY);
 
-      facesMat = new cv.Mat();
-      detector.detect(srcMat, facesMat);
-
-      // facesMat: one row per detected face, columns:
-      // [x, y, w, h, x_re, y_re, x_le, y_le, x_nt, y_nt, x_rcm, y_rcm, x_lcm, y_lcm, score]
-      ctx.fillStyle = "#000000";
-      for (let i = 0; i < facesMat.rows; i++) {
-        const x = facesMat.data32F[i * 15 + 0];
-        const y = facesMat.data32F[i * 15 + 1];
-        const w = facesMat.data32F[i * 15 + 2];
-        const h = facesMat.data32F[i * 15 + 3];
-
-        const rx = Math.max(0, x - padding);
-        const ry = Math.max(0, y - padding);
-        const rw = Math.min(canvas.width, x + w + padding) - rx;
-        const rh = Math.min(canvas.height, y + h + padding) - ry;
-
-        ctx.fillRect(rx, ry, rw, rh);
-      }
-    } finally {
-      srcMat.delete();
-      if (facesMat) facesMat.delete();
+    ctx.fillStyle = "#000000";
+    for (const face of faces) {
+      const rx = Math.max(0, face.x - padding);
+      const ry = Math.max(0, face.y - padding);
+      const rw = Math.min(canvas.width, face.x + face.width + padding) - rx;
+      const rh = Math.min(canvas.height, face.y + face.height + padding) - ry;
+      ctx.fillRect(rx, ry, rw, rh);
     }
 
     const dataUrl = canvas.toDataURL(outputMimeType, outputQuality);
@@ -272,16 +197,21 @@
   }
 
   function faceRedaction(base64Image, options) {
-    return run(base64Image, options);
+    return run(base64Image, options).catch((error) => {
+      console.warn("Face redaction skipped because the ONNX runtime is unavailable:", error);
+      return base64Image;
+    });
   }
 
-  faceRedaction.init = init;
   faceRedaction.run = run;
-
-  // Expose globally (for plain <script> usage) and as a CommonJS export
-  // (for bundlers), without assuming either environment.
   global.faceRedaction = faceRedaction;
   if (typeof module !== "undefined" && module.exports) {
     module.exports = faceRedaction;
   }
 })(typeof window !== "undefined" ? window : globalThis);
+
+// ---- VALIDATION NOTE ----
+// Run this on a screenshot with one clear face, check the console for
+// the number of faces detected and their box coordinates, and visually
+// confirm the black box lands on the face. If boxes are off, tell me
+// how (too big/small/shifted) so I can correct the exact formula.

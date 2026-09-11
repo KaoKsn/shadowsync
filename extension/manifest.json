@@ -16,7 +16,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["face_detection_yunet_2023mar.onnx"],
+      "resources": [
+        "face_detection_yunet_2023mar.onnx",
+        "ort.wasm.min.js",
+        "*.mjs",
+        "*.wasm"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
@@ -26,7 +31,7 @@
       "js": [
         "html2canvas.min.js",
         "redactor.js",
-        "opencv.js",
+        "ort.wasm.min.js",
         "faceRedaction.js",
         "content.js"
       ],
