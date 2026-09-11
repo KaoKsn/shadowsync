@@ -53,10 +53,13 @@
   async function getSession(modelUrl) {
     if (!sessionPromise) {
       ort.env.wasm.proxy = false;
-      sessionPromise = ort.InferenceSession.create(modelUrl || defaultModelUrl, {
-        executionProviders: ["wasm"],
-        graphOptimizationLevel: "all",
-      });
+      sessionPromise = ort.InferenceSession.create(
+        modelUrl || defaultModelUrl,
+        {
+          executionProviders: ["wasm"],
+          graphOptimizationLevel: "all",
+        },
+      );
     }
     return sessionPromise;
   }
@@ -82,7 +85,12 @@
       chw[2 * planeSize + i] = r;
     }
 
-    const tensor = new ort.Tensor("float32", chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    const tensor = new ort.Tensor("float32", chw, [
+      1,
+      3,
+      INPUT_SIZE,
+      INPUT_SIZE,
+    ]);
     return {
       tensor,
       scaleX: sourceCanvas.width / INPUT_SIZE,
@@ -166,7 +174,11 @@
       throw new Error("faceRedaction: base64Image must be a non-empty string.");
     }
 
-    const { padding = 0, outputMimeType = "image/png", outputQuality = 0.92 } = options;
+    const {
+      padding = 0,
+      outputMimeType = "image/png",
+      outputQuality = 0.92,
+    } = options;
     const { prefix } = splitDataUrl(base64Image);
     const isDataUrl = prefix !== "";
 
@@ -198,7 +210,10 @@
 
   function faceRedaction(base64Image, options) {
     return run(base64Image, options).catch((error) => {
-      console.warn("Face redaction skipped because the ONNX runtime is unavailable:", error);
+      console.warn(
+        "Face redaction skipped because the ONNX runtime is unavailable:",
+        error,
+      );
       return base64Image;
     });
   }
