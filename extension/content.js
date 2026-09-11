@@ -137,8 +137,6 @@ async function updateClickables() {
 
     copyScrollPosition(sanitizedIframe);
 
-    activeHints.clear();
-
     const elements = Array.from(
       sanitizedIframeDoc.querySelectorAll(CONFIG.selectors),
     ).filter((el) => {
@@ -190,8 +188,8 @@ async function updateClickables() {
         tag: element.tagName.toLowerCase(),
 
         text:
-          element.innerText?.trim() ||
           element.value ||
+          element.innerText?.trim() ||
           element.getAttribute("aria-label") ||
           "",
 
@@ -199,11 +197,33 @@ async function updateClickables() {
       });
     });
 
+    /*
+    const fullWidth = Math.max(
+      sanitizedIframeDoc.body.scrollWidth,
+      sanitizedIframeDoc.documentElement.scrollWidth,
+    );
+    const fullHeight = Math.max(
+      sanitizedIframeDoc.body.scrollHeight,
+      sanitizedIframeDoc.documentElement.scrollHeight,
+    );
+
+    const canvas = await html2canvas(sanitizedIframeDoc.body, {
+      x: 0,
+      y: 0,
+      width: fullWidth,
+      height: fullHeight,
+      windowWidth: fullWidth,
+      windowHeight: fullHeight,
+      scale: 1,
+      useCORS: true,
+      logging: false,
+    });
+    */
     const canvas = await html2canvas(sanitizedIframeDoc.body, {
       x: window.scrollX,
       y: window.scrollY,
 
-      width: window.innerWidth,
+      width: window.innerWidth, // final width.
       height: window.innerHeight,
 
       windowWidth: window.innerWidth,
@@ -237,7 +257,8 @@ async function updateClickables() {
     sendToBackground({
       url: window.location.origin,
       elements: payloadElements,
-      screenshot: await faceRedaction(screenshotData),
+      // screenshot: await faceRedaction(screenshotData),
+      screenshot: screenshotData,
     });
   } catch (error) {
     if (DEBUG) {
