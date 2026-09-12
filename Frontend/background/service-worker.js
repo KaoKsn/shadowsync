@@ -175,6 +175,24 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // ── Relay and Message Support ───────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'CAPTURE_VISIBLE_TAB') {
+    const windowId = sender.tab?.windowId || null;
+    try {
+      chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[PrivSight SW] captureVisibleTab error:', chrome.runtime.lastError.message);
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          sendResponse({ ok: true, dataUrl });
+        }
+      });
+    } catch (err) {
+      console.warn('[PrivSight SW] captureVisibleTab exception:', err);
+      sendResponse({ ok: false, error: err.message });
+    }
+    return true; // Keep message channel open for asynchronous sendResponse
+  }
+
   if (message.action === 'UPDATE_CLICKABLES') {
     sendResponse({ ok: true });
     return true;

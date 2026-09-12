@@ -426,143 +426,159 @@
     return hint;
   }
 
-  async function createSanitizedIframe(sanitizedDoc) {
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-100000px';
-    iframe.style.top = '0';
-    iframe.style.width = `${window.innerWidth}px`;
-    iframe.style.height = `${window.innerHeight}px`;
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    iframe.style.border = '0';
-    iframe.setAttribute('aria-hidden', 'true');
-
-    document.documentElement.appendChild(iframe);
-    const iframeDoc = iframe.contentDocument;
-    if (!iframeDoc) {
-      iframe.remove();
-      throw new Error('Could not access sanitized iframe document.');
-    }
-
-    sanitizedDoc.querySelectorAll('script').forEach((s) => s.remove());
-    // Also remove any in-page overlay clone from iframe
-    const ov = sanitizedDoc.getElementById('privsight-overlay');
-    if (ov) ov.remove();
-
-    iframeDoc.replaceChild(
-      iframeDoc.importNode(sanitizedDoc.documentElement, true),
-      iframeDoc.documentElement
-    );
-
-    document.querySelectorAll("style, link[rel='stylesheet']").forEach((sheet) => {
-      try {
-        iframeDoc.head.appendChild(sheet.cloneNode(true));
-      } catch (_) {}
-    });
-
-    await new Promise((resolve) => {
-      if (iframeDoc.readyState === 'complete') {
-        resolve();
-      } else {
-        iframe.addEventListener('load', () => resolve(), { once: true });
-        setTimeout(resolve, 300);
-      }
-    });
-
-    try {
-      iframe.contentWindow.scrollTo(window.scrollX, window.scrollY);
-    } catch (_) {}
-
-    return iframe;
-  }
-
   // ─── Capture & Hints Engine ─────────────────────────────
   async function capturePage() {
     activeHints.clear();
     const redactor = getRedactor();
 
-    // 1. Locate visible interactive elements on the real page
-    const orgElements = Array.from(document.querySelectorAll(CONFIG.selectors)).filter((el) => {
-      if (el.closest('#privsight-overlay')) return false;
-      const rect = el.getBoundingClientRect();
-      const style = window.getComputedStyle(el);
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        style.opacity !== '0'
-      );
-    });
+    // 1. Redact live DOM in-place, keeping track of undo list and scrubbing stats
+    let undoList = [];
+    let scrubbingStats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
 
-    let sanitizedIframe = null;
-    try {
-      let sanitizedDoc = document;
-      let scrubbingStats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
-
-      if (redactor) {
-        const scrubbed = await redactor.sanitize(document);
-        sanitizedDoc = scrubbed.doc;
-        const s = scrubbed.stats || {};
+    if (redactor && typeof redactor.redactLiveDOM === 'function') {
+      try {
+        const redactResult = redactor.redactLiveDOM(document.body || document.documentElement);
+        undoList = redactResult.undoList || [];
+        const s = redactResult.stats || {};
         let sensitiveCount = 0;
         Object.keys(s).forEach((k) => {
-          if (typeof s[k] === 'number') sensitiveCount += s[k];
+          if (typeof s[k] === 'number' && k !== 'total') sensitiveCount += s[k];
         });
         scrubbingStats = {
-          dataFound: orgElements.length * 8 + sensitiveCount,
+          dataFound: sensitiveCount,
           sensitiveRecognized: sensitiveCount,
           sensitiveRemoved: sensitiveCount,
         };
+      } catch (redactErr) {
+        console.warn('[PrivSight] Live DOM redaction error:', redactErr);
+      }
+    }
+
+    // 2. Query visible interactive elements STRICTLY inside the current viewport
+    const vpWidth = window.innerWidth || document.documentElement.clientWidth;
+    const vpHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    const orgElements = Array.from(document.querySelectorAll(CONFIG.selectors)).filter((el) => {
+      if (el.closest('#privsight-overlay') || el.closest('#privsight-hint-container')) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+
+      // Must have dimensions and be visually displayed
+      if (
+        rect.width <= 0 ||
+        rect.height <= 0 ||
+        style.visibility === 'hidden' ||
+        style.display === 'none' ||
+        style.opacity === '0'
+      ) {
+        return false;
       }
 
-      sanitizedIframe = await createSanitizedIframe(sanitizedDoc);
-      const iframeDoc = sanitizedIframe.contentDocument;
-      if (!iframeDoc) {
-        throw new Error('Sanitized iframe document unavailable.');
+      // Check strictly against the visible viewport
+      const inViewport = (
+        rect.top < vpHeight &&
+        rect.bottom > 0 &&
+        rect.left < vpWidth &&
+        rect.right > 0
+      );
+
+      return inViewport;
+    });
+
+    scrubbingStats.dataFound += orgElements.length;
+
+    // 3. Assign data-hint, add class to elements, and create UI hint badges for viewport elements
+    const sanitizedDom = [];
+    let hintContainer = document.getElementById('privsight-hint-container');
+    if (hintContainer) hintContainer.remove();
+
+    hintContainer = document.createElement('div');
+    hintContainer.id = 'privsight-hint-container';
+    hintContainer.setAttribute('aria-hidden', 'true');
+    Object.assign(hintContainer.style, {
+      position: 'fixed',
+      top: '0',
+      left: '0',
+      width: '100vw',
+      height: '100vh',
+      pointerEvents: 'none',
+      zIndex: '2147483646',
+      overflow: 'hidden',
+    });
+
+    orgElements.forEach((el, index) => {
+      const hint = String(index);
+      activeHints.set(hint, el);
+      el.setAttribute('data-hint', hint);
+      el.classList.add('privsight-target-hint');
+
+      // Create visual number badge for UI positioned directly over the viewport coordinates
+      const rect = el.getBoundingClientRect();
+      const badge = document.createElement('span');
+      badge.className = CONFIG.badgeClass || 'llm-hint-badge';
+      badge.textContent = hint;
+      Object.assign(badge.style, {
+        position: 'fixed',
+        top: `${Math.max(0, Math.round(rect.top))}px`,
+        left: `${Math.max(0, Math.round(rect.left))}px`,
+        background: '#ffeb3b',
+        color: '#000000',
+        border: '1px solid #f57f17',
+        borderRadius: '2px',
+        padding: '0 3px',
+        fontSize: '11px',
+        fontWeight: 'bold',
+        fontFamily: 'sans-serif',
+        lineHeight: '13px',
+        height: '13px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+        pointerEvents: 'none',
+        userSelect: 'none',
+        zIndex: '2147483646',
+      });
+      hintContainer.appendChild(badge);
+
+      // JSON-like representation for LLM payload (only data_hint and tag for viewport elements)
+      sanitizedDom.push({
+        data_hint: hint,
+        tag: el.tagName ? el.tagName.toLowerCase() : 'div',
+      });
+    });
+
+    (document.documentElement || document.body).appendChild(hintContainer);
+
+    let screenshotB64 = '';
+    try {
+      // 4. Capture screenshot using built-in browser screen capture (chrome.tabs.captureVisibleTab)
+      const overlayHost = overlayRoot?.host;
+      const prevOverlayDisplay = overlayHost ? overlayHost.style.display : null;
+      if (overlayHost) {
+        overlayHost.style.display = 'none';
       }
 
-      iframeDoc.querySelectorAll('img').forEach((img) => {
-        if (img.loading === 'lazy') img.loading = 'eager';
-      });
+      // Allow browser to render badges and hide overlay before screen capture
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 40)));
 
-      const sanitizedElements = Array.from(iframeDoc.querySelectorAll(CONFIG.selectors)).filter((el) => {
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-
-      const sanitizedDom = [];
-      const badgeData = [];
-
-      orgElements.forEach((orgEl, index) => {
-        const hint = String(index);
-        activeHints.set(hint, orgEl);
-        orgEl.setAttribute('data-hint', hint);
-
-        const sEl = sanitizedElements[index] || orgEl;
-        try {
-          sEl.setAttribute('data-hint', hint);
-        } catch (_) {}
-
-        const rect = sEl.getBoundingClientRect();
-        badgeData.push({
-          text: hint,
-          top: Math.max(0, rect.top),
-          left: Math.max(0, rect.left),
+      let capturedDataUrl = null;
+      try {
+        capturedDataUrl = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE_TAB' }, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (!response?.ok || !response?.dataUrl) {
+              reject(new Error(response?.error || 'Empty captureVisibleTab response'));
+            } else {
+              resolve(response.dataUrl);
+            }
+          });
         });
-
-        // Send only data_hint and tag to minimize payload size for LLM context window
-        sanitizedDom.push({
-          data_hint: hint,
-          tag: orgEl.tagName ? orgEl.tagName.toLowerCase() : 'div',
-        });
-      });
-
-      // 2. Render screenshot via html2canvas
-      let screenshotB64 = '';
-      if (typeof html2canvas !== 'undefined') {
-        try {
-          const canvas = await html2canvas(iframeDoc.body, {
+      } catch (tabCaptureErr) {
+        console.warn('[PrivSight] Inbuilt captureVisibleTab failed, falling back to html2canvas:', tabCaptureErr);
+        if (typeof html2canvas !== 'undefined') {
+          const canvas = await html2canvas(document.body, {
             x: window.scrollX,
             y: window.scrollY,
             width: window.innerWidth,
@@ -572,54 +588,58 @@
             scale: 1,
             useCORS: true,
             logging: false,
+            ignoreElements: (element) => element.id === 'privsight-overlay',
           });
-
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            badgeData.forEach((badge) => {
-              const pad = 4;
-              ctx.font = 'bold 10px sans-serif';
-              const metrics = ctx.measureText(badge.text);
-              const boxW = Math.max(16, metrics.width + pad * 2);
-              const boxH = 14;
-
-              ctx.fillStyle = '#ffeb3b';
-              ctx.strokeStyle = '#f57f17';
-              ctx.lineWidth = 1;
-              ctx.fillRect(badge.left, badge.top, boxW, boxH);
-              ctx.strokeRect(badge.left, badge.top, boxW, boxH);
-
-              ctx.fillStyle = '#000000';
-              ctx.fillText(badge.text, badge.left + pad, badge.top + 10);
-            });
-          }
-
-          const dataUrl = canvas.toDataURL('image/png');
-          let processedDataUrl = dataUrl;
-
-          // 3. Redact faces on screenshot using YuNet ONNX
-          if (typeof window.faceRedaction === 'function') {
-            try {
-              processedDataUrl = await window.faceRedaction(dataUrl);
-            } catch (e) {
-              console.warn('[PrivSight] Face redaction pass:', e);
-            }
-          }
-
-          screenshotB64 = processedDataUrl.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
-        } catch (canvasErr) {
-          console.warn('[PrivSight] html2canvas screenshot capture warning:', canvasErr);
+          capturedDataUrl = canvas.toDataURL('image/png');
+        }
+      } finally {
+        // Immediately restore overlay veil
+        if (overlayHost) {
+          overlayHost.style.display = prevOverlayDisplay || 'block';
         }
       }
 
-      return {
-        sanitized_dom: sanitizedDom,
-        sanitized_screenshot_b64: screenshotB64,
-        stats: scrubbingStats,
-      };
+      if (capturedDataUrl) {
+        let processedDataUrl = capturedDataUrl;
+
+        // 5. Face redaction pass on screenshot using YuNet ONNX
+        if (typeof window.faceRedaction === 'function') {
+          try {
+            processedDataUrl = await window.faceRedaction(capturedDataUrl);
+          } catch (e) {
+            console.warn('[PrivSight] Face redaction pass warning:', e);
+          }
+        }
+
+        screenshotB64 = processedDataUrl.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+      }
+    } catch (err) {
+      console.warn('[PrivSight] Screenshot capture warning:', err);
     } finally {
-      if (sanitizedIframe) sanitizedIframe.remove();
+      // 6. Remove number badges from UI, but KEEP data-hint in live DOM
+      if (hintContainer && hintContainer.parentNode) {
+        hintContainer.parentNode.removeChild(hintContainer);
+      }
+      orgElements.forEach((el) => {
+        el.classList.remove('privsight-target-hint');
+      });
+
+      // 7. Restore redacted info in the live DOM
+      if (redactor && typeof redactor.restoreLiveDOM === 'function' && undoList.length > 0) {
+        try {
+          redactor.restoreLiveDOM(undoList);
+        } catch (restoreErr) {
+          console.warn('[PrivSight] Live DOM restore error:', restoreErr);
+        }
+      }
     }
+
+    // 8. Return sanitized DOM and screenshot payload to send to backend
+    return {
+      sanitized_dom: sanitizedDom,
+      sanitized_screenshot_b64: screenshotB64,
+      stats: scrubbingStats,
+    };
   }
 
   // ─── Action Executor Engine ─────────────────────────────

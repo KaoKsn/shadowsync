@@ -453,6 +453,239 @@
     }
 
     /**
+     * In-place redaction on the live DOM tree.
+     * Records all modifications in an undoList and tracks PII stats.
+     * Skips extension overlay elements and script/style tags.
+     * @param {Node} rootNode
+     * @returns {{undoList: Array<object>, stats: object}}
+     */
+    redactLiveDOM(rootNode = (document.body || document.documentElement)) {
+      const stats = {
+        password: 0,
+        aadhaar: 0,
+        indianPassport: 0,
+        ifsc: 0,
+        pan: 0,
+        vehicleRegistration: 0,
+        email: 0,
+        phone: 0,
+        creditCard: 0,
+        username: 0,
+        ssn: 0,
+        jwt: 0,
+        bearer: 0,
+        apiKey: 0,
+        total: 0,
+      };
+      const undoList = [];
+
+      const traverse = (node) => {
+        if (!node) return;
+
+        // Skip script, style, and PrivSight extension UI elements
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tag = node.tagName.toLowerCase();
+          if (tag === "script" || tag === "style") return;
+          if (
+            node.id === "privsight-overlay" ||
+            node.id === "privsight-hint-container" ||
+            (typeof node.classList?.contains === "function" &&
+              (node.classList.contains("privsight-shell") ||
+               node.classList.contains("llm-hint-badge")))
+          ) {
+            return;
+          }
+        }
+
+        // 1. Text Node Handling
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (this.options.redactTextNodes && node.nodeValue) {
+            const originalVal = node.nodeValue;
+            const redactedVal = redactString(originalVal, stats);
+            if (redactedVal !== originalVal) {
+              node.nodeValue = redactedVal;
+              undoList.push({ type: "text", node, value: originalVal });
+            }
+          }
+          return;
+        }
+
+        // 2. Element Node Handling
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tagName = node.tagName.toLowerCase();
+
+          if (tagName === "input" || tagName === "textarea") {
+            const type = (node.getAttribute("type") || "text").toLowerCase();
+            const originalPropValue = node.value;
+            const hadAttr = node.hasAttribute("value");
+            const originalAttrValue = node.getAttribute("value");
+            let changed = false;
+
+            if (type === "password") {
+              if (hadAttr && originalAttrValue !== "[REDACTED]") {
+                node.setAttribute("value", "[REDACTED]");
+                stats.password++;
+                changed = true;
+              }
+              if (originalPropValue !== "[REDACTED]") {
+                node.value = "[REDACTED]";
+                changed = true;
+              }
+            } else {
+              const nameAttr = (node.getAttribute("name") || "").toLowerCase();
+              const idAttr = (node.getAttribute("id") || "").toLowerCase();
+              const placeholderAttr = (node.getAttribute("placeholder") || "").toLowerCase();
+              const autocompleteAttr = (node.getAttribute("autocomplete") || "").toLowerCase();
+
+              const isSecretField =
+                nameAttr.includes("password") ||
+                idAttr.includes("password") ||
+                autocompleteAttr.includes("password");
+              const isApiKeyField =
+                nameAttr.includes("api") ||
+                idAttr.includes("api") ||
+                nameAttr.includes("key") ||
+                idAttr.includes("key") ||
+                nameAttr.includes("token") ||
+                idAttr.includes("token") ||
+                nameAttr.includes("secret") ||
+                idAttr.includes("secret");
+              const isUsernameField =
+                nameAttr.includes("username") ||
+                idAttr.includes("username") ||
+                nameAttr.includes("user_name") ||
+                idAttr.includes("name") ||
+                idAttr.includes("holder") ||
+                nameAttr.includes("holder") ||
+                nameAttr.includes("owner") ||
+                idAttr.includes("owner");
+
+              if (isSecretField) {
+                if (hadAttr && originalAttrValue !== "[REDACTED]") {
+                  node.setAttribute("value", "[REDACTED]");
+                  stats.password++;
+                  changed = true;
+                }
+                if (originalPropValue !== "[REDACTED]") {
+                  node.value = "[REDACTED]";
+                  changed = true;
+                }
+              } else if (isApiKeyField) {
+                if (hadAttr && originalAttrValue) {
+                  node.setAttribute("value", "[REDACTED]");
+                  stats.apiKey++;
+                  changed = true;
+                }
+                if (originalPropValue) {
+                  node.value = "[REDACTED]";
+                  changed = true;
+                }
+              } else if (isUsernameField) {
+                if (hadAttr && originalAttrValue) {
+                  node.setAttribute("value", "[REDACTED]");
+                  stats.username++;
+                  changed = true;
+                }
+                if (originalPropValue) {
+                  node.value = "[REDACTED]";
+                  changed = true;
+                }
+              } else {
+                if (originalPropValue) {
+                  const redacted = redactString(originalPropValue, stats);
+                  if (redacted !== originalPropValue) {
+                    node.value = redacted;
+                    changed = true;
+                  }
+                }
+                if (hadAttr && originalAttrValue) {
+                  const redactedAttr = redactString(originalAttrValue, stats);
+                  if (redactedAttr !== originalAttrValue) {
+                    node.setAttribute("value", redactedAttr);
+                    changed = true;
+                  }
+                }
+              }
+            }
+
+            if (changed) {
+              undoList.push({
+                type: "input",
+                node,
+                propValue: originalPropValue,
+                hadAttr,
+                attrValue: originalAttrValue,
+              });
+            }
+          }
+
+          // Targeted Attributes Sanitization
+          this.options.targetAttributes.forEach((attrName) => {
+            if (node.hasAttribute(attrName)) {
+              const originalVal = node.getAttribute(attrName);
+              let redactedVal;
+              if (attrName === "href") {
+                redactedVal = redactHref(originalVal, stats);
+              } else {
+                redactedVal = redactString(originalVal, stats);
+              }
+              if (redactedVal !== originalVal) {
+                node.setAttribute(attrName, redactedVal);
+                undoList.push({
+                  type: "attr",
+                  node,
+                  attrName,
+                  value: originalVal,
+                });
+              }
+            }
+          });
+
+          // Traverse child nodes
+          const children = Array.from(node.childNodes);
+          for (let i = 0; i < children.length; i++) {
+            traverse(children[i]);
+          }
+        }
+      };
+
+      traverse(rootNode);
+
+      stats.total = Object.keys(stats)
+        .filter((k) => k !== "total")
+        .reduce((acc, curr) => acc + stats[curr], 0);
+
+      return { undoList, stats };
+    }
+
+    /**
+     * Restores all modified nodes in the live DOM using the undoList in reverse order.
+     * @param {Array<object>} undoList
+     */
+    restoreLiveDOM(undoList) {
+      if (!Array.isArray(undoList)) return;
+      for (let i = undoList.length - 1; i >= 0; i--) {
+        const item = undoList[i];
+        try {
+          if (item.type === "text") {
+            item.node.nodeValue = item.value;
+          } else if (item.type === "input") {
+            item.node.value = item.propValue;
+            if (item.hadAttr) {
+              item.node.setAttribute("value", item.attrValue);
+            } else {
+              item.node.removeAttribute("value");
+            }
+          } else if (item.type === "attr") {
+            item.node.setAttribute(item.attrName, item.value);
+          }
+        } catch (err) {
+          console.warn("[PrivSight DOMRedactor] Error restoring DOM node:", err);
+        }
+      }
+    }
+
+    /**
      * Helper method to export/download a DOM document as an HTML file.
      * @param {string|Document} domSource
      * @param {string} filename

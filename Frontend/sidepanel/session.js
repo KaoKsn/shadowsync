@@ -259,7 +259,7 @@
   // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
-  const BASE_URL = 'http://10.156.193.248:8000';
+  const BASE_URL = 'http://10.20.62.208:8000';
 
   const AgentBackendClient = {
     BASE_URL,
