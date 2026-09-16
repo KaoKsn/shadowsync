@@ -428,6 +428,15 @@
 
   // ─── Capture & Hints Engine ─────────────────────────────
   async function capturePage() {
+    // Ensure page DOM and all resources (images, stylesheets) are completely loaded
+    if (document.readyState !== 'complete') {
+      await new Promise((resolve) => {
+        if (document.readyState === 'complete') return resolve();
+        window.addEventListener('load', resolve, { once: true });
+        setTimeout(resolve, 2500); // Safety fallback timeout
+      });
+    }
+
     activeHints.clear();
     const redactor = getRedactor();
 

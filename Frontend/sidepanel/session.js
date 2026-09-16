@@ -103,6 +103,7 @@
     sessions.push(newSession);
     setStorageData(SESSIONS_STORAGE_KEY, sessions);
     setCurrentSessionId(id);
+    AgentBackendClient.resetRequestTimer();
 
     console.debug(`[PrivSight Session] Created session "${id}" for task: "${newSession.task}"`);
     return newSession;
@@ -259,10 +260,25 @@
   // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
-  const BASE_URL = 'http://10.20.62.208:8000';
+  const BASE_URL = 'http://10.156.193.248:8000';
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Minimum gap between consecutive backend requests (in milliseconds).
+  // >>> TO REMOVE: Change MIN_REQUEST_GAP_MS to 0, or remove the throttle block in postTurn <<<
+  // ─────────────────────────────────────────────────────────────────────────────
+  const MIN_REQUEST_GAP_MS = 2000; // 2 seconds minimum gap between requests
+  let lastRequestEndTime = 0;
 
   const AgentBackendClient = {
     BASE_URL,
+    MIN_REQUEST_GAP_MS,
+
+    /**
+     * Resets the request gap timer so the next request fires immediately.
+     */
+    resetRequestTimer() {
+      lastRequestEndTime = 0;
+    },
 
     /**
      * Check backend liveness.
@@ -309,6 +325,20 @@
         throw new Error('postTurn: sessionId is required');
       }
 
+      // ─────────────────────────────────────────────────────────────────────────
+      // 2-SECOND DELAY BETWEEN REQUESTS
+      // >>> TO REMOVE: Delete or comment out this block, or change MIN_REQUEST_GAP_MS to 0 above <<<
+      // ─────────────────────────────────────────────────────────────────────────
+      if (MIN_REQUEST_GAP_MS > 0 && lastRequestEndTime > 0) {
+        const elapsed = Date.now() - lastRequestEndTime;
+        if (elapsed < MIN_REQUEST_GAP_MS) {
+          const waitMs = MIN_REQUEST_GAP_MS - elapsed;
+          console.log(`[PrivSight Client] Waiting ${waitMs}ms to enforce minimum ${MIN_REQUEST_GAP_MS}ms gap between requests...`);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
       // Ensure screenshot is raw base64 with no data: prefix
       const cleanB64 = (sanitizedScreenshotB64 || '').replace(
         /^data:image\/[a-zA-Z+.-]+;base64,/,
@@ -330,31 +360,35 @@
 
       console.log(`[PrivSight Client] POST /turn (session: ${sessionId}, elements: ${payload.sanitized_dom.length})`);
 
-      const response = await fetch(`${BASE_URL}/turn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const response = await fetch(`${BASE_URL}/turn`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) {
-        let errorDetail = `HTTP ${response.status}`;
-        try {
-          const errData = await response.json();
-          if (errData.detail) {
-            errorDetail = typeof errData.detail === 'string'
-              ? errData.detail
-              : JSON.stringify(errData.detail);
-          }
-        } catch (_) {}
-        throw new Error(`Backend /turn error: ${errorDetail}`);
+        if (!response.ok) {
+          let errorDetail = `HTTP ${response.status}`;
+          try {
+            const errData = await response.json();
+            if (errData.detail) {
+              errorDetail = typeof errData.detail === 'string'
+                ? errData.detail
+                : JSON.stringify(errData.detail);
+            }
+          } catch (_) {}
+          throw new Error(`Backend /turn error: ${errorDetail}`);
+        }
+
+        const data = await response.json();
+        console.log('[PrivSight Client] /turn response:', data);
+        return data;
+      } finally {
+        lastRequestEndTime = Date.now();
       }
-
-      const data = await response.json();
-      console.log('[PrivSight Client] /turn response:', data);
-      return data;
     },
 
     /**

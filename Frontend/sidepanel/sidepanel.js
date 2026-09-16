@@ -209,7 +209,10 @@
       timer = setTimeout(finish, timeoutMs);
 
       chrome.tabs.get(tabId, (t) => {
-        if (chrome.runtime.lastError || !t) return;
+        if (chrome.runtime.lastError || !t) {
+          finish();
+          return;
+        }
         if (t.status === 'complete') {
           setTimeout(finish, 400);
         }
@@ -225,6 +228,9 @@
     if (!tab?.id || isRestrictedUrl(tab.url)) {
       throw new Error('PrivSight cannot inspect internal browser pages (' + (tab?.url || 'unknown') + '). Please switch to a regular web page.');
     }
+
+    // Ensure the tab has completely finished loading before taking screenshot & capturing state
+    await waitForTabReady(tab.id);
 
     return new Promise((resolve, reject) => {
       function attempt(attemptsLeft) {
