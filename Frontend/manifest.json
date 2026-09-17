@@ -44,6 +44,7 @@
         "content/redactor.js",
         "content/ort.wasm.min.js",
         "content/faceRedaction.js",
+        "content/qrMask.js",
         "content/agent.js"
       ],
       "run_at": "document_end"
