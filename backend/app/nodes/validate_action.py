@@ -1,5 +1,6 @@
 from app.state import AgentState, AgentAction
 from app.config import settings
+from langsmith import traceable
 
 
 def _invalid(state: AgentState, message: str) -> AgentState:
@@ -26,6 +27,8 @@ def _invalid(state: AgentState, message: str) -> AgentState:
     return state
 
 
+
+@traceable(name="validate_action")
 def validate_action(state: AgentState) -> AgentState:
     """Pure logic, no LLM call. Checks the proposed action against the
     current sanitized_dom and decides whether to accept it, retry, or

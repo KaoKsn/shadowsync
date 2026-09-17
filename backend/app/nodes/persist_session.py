@@ -1,7 +1,9 @@
 from app.state import AgentState
 from app import store
+from langsmith import traceable
 
 
+@traceable(name="persist_session")
 def persist_session(state: AgentState) -> AgentState:
     """No LLM call. Appends the validated action to the session's history
     in the store so the next turn's ingest_context sees it. If the task

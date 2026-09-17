@@ -1,4 +1,8 @@
 import json
+from typing import Optional, Any
+
+from langsmith import traceable
+
 from app.config import settings
 from app.state import AgentState, AgentAction
 
@@ -20,12 +24,13 @@ Rules:
 - Never choose an element where "disabled" is true.
 - Use "DONE" only when the task goal is fully satisfied.
 - Use "USER" when the task requires something you cannot or should not do yourself --
-    e.g. a captcha, OTP/2FA code, payment details, login credentials, or any action needing
+    e.g. a captcha, OTP/2FA code, payment details, login credentials like username and password, or any action needing
     human judgement or sensitive input. Put a clear, specific instruction in "text" telling
     the user exactly what to do (e.g. "Enter the 6-digit OTP sent to your phone and click Verify").
+- If a field's value is "[REDACTED]", the user has already completed that field -- treat it as done, don't retype it or ask again.
 - One action per response.
+-If the user has entered all the credentials ( show as [REDACTED]) click on Sign in button
 """
-
 
 def _format_element(el: dict) -> str:
     parts = [f'data_hint={el["data_hint"]}', f'tag={el["tag"]}']
@@ -90,7 +95,31 @@ def _parse_response(raw_text: str) -> AgentAction:
     )
 
 
-def _call_ollama(state: AgentState) -> AgentAction:
+def _response_value(response: Any, key: str) -> Any:
+    if isinstance(response, dict):
+        return response.get(key)
+    return getattr(response, key, None)
+
+
+def _extract_total_tokens(response: Any) -> Optional[int]:
+    usage = _response_value(response, "usage")
+    if usage is not None:
+        if isinstance(usage, dict):
+            total_tokens = usage.get("total_tokens")
+        else:
+            total_tokens = getattr(usage, "total_tokens", None)
+        if total_tokens is not None:
+            return int(total_tokens)
+
+    prompt_tokens = _response_value(response, "prompt_eval_count")
+    completion_tokens = _response_value(response, "eval_count")
+    if prompt_tokens is not None or completion_tokens is not None:
+        return int(prompt_tokens or 0) + int(completion_tokens or 0)
+
+    return None
+
+
+def _call_ollama(state: AgentState) -> tuple[AgentAction, Optional[int]]:
     import ollama
 
     response = ollama.chat(
@@ -105,10 +134,10 @@ def _call_ollama(state: AgentState) -> AgentAction:
         ],
         options={"temperature": 0.1},
     )
-    return _parse_response(response["message"]["content"])
+    return _parse_response(response["message"]["content"]), _extract_total_tokens(response)
 
 
-def _call_openai(state: AgentState) -> AgentAction:
+def _call_openai(state: AgentState) -> tuple[AgentAction, Optional[int]]:
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -132,10 +161,11 @@ def _call_openai(state: AgentState) -> AgentAction:
         ],
         temperature=0.1,
     )
-    return _parse_response(response.choices[0].message.content)
+    return _parse_response(response.choices[0].message.content), _extract_total_tokens(response)
 
 
-def generate_action(state: AgentState) -> AgentAction:
+@traceable(name="generate_action")
+def generate_action(state: AgentState) -> tuple[AgentAction, Optional[int]]:
     """Single entry point used by the reason_plan node.
     Swap models by changing MODEL_PROVIDER in .env -- nothing else changes."""
     if settings.model_provider == "ollama":

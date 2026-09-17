@@ -1,6 +1,9 @@
 from app.state import AgentState
 from app import store
+from langsmith import traceable
 
+
+@traceable(name="ingest_context")
 def ingest_context(state: AgentState) -> AgentState:
     """Entry node. The caller (FastAPI endpoint) has already populated
     session_id, task_goal, sanitized_dom, sanitized_screenshot_b64 on `state`.
@@ -14,6 +17,7 @@ def ingest_context(state: AgentState) -> AgentState:
 
     state["action_history"] = session.action_history
     state["proposed_action"] = None
+    state["token_usage_total"] = 0
     state["retry_count"] = 0
     state["is_valid"] = False
     state["is_complete"] = session.is_complete

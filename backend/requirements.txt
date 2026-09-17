@@ -1,9 +1,9 @@
 fastapi
-uvicorn[standard]
 langgraph
-langchain-core
+langsmith
+ollama
+openai
 pydantic
 pydantic-settings
 python-dotenv
-ollama
-openai
+uvicorn[standard]

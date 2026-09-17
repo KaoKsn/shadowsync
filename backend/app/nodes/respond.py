@@ -1,6 +1,8 @@
 from app.state import AgentState
+from langsmith import traceable
 
 
+@traceable(name="respond")
 def respond(state: AgentState) -> AgentState:
     """No LLM call, no side effects. Shapes the final payload that the
     FastAPI endpoint will send back to the extension. The action itself

@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import Optional
 from app.state import AgentAction
 
@@ -12,6 +14,7 @@ class SessionData:
 # in-memory store keyed by session_id -- swap this dict for RedisSaver later,
 # the get/save/reset functions below are the only surface the graph touches
 _sessions: dict[str, SessionData] = {}
+_logs_path = Path(__file__).resolve().parents[1] / "artifacts" / "logs.json"
 
 
 def get_session(session_id: str, task_goal: str) -> SessionData:
@@ -41,3 +44,19 @@ def reset_session(session_id: str) -> bool:
     Returns True if a session actually existed and was removed.
     """
     return _sessions.pop(session_id, None) is not None
+
+
+def append_request_log(entry: dict) -> None:
+    _logs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logs = []
+    if _logs_path.exists():
+        try:
+            loaded = json.loads(_logs_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                logs = loaded
+        except json.JSONDecodeError:
+            logs = []
+
+    logs.append(entry)
+    _logs_path.write_text(json.dumps(logs, indent=2), encoding="utf-8")

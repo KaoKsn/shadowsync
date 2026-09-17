@@ -38,6 +38,7 @@ class AgentState(TypedDict):
 
     # working fields used within a single graph run
     proposed_action: Optional[AgentAction]
+    token_usage_total: int
     retry_count: int
     is_valid: bool
     is_complete: bool
