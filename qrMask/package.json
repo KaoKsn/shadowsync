@@ -1,0 +1,10 @@
+{
+  "name": "privsight-qr-mask-cli",
+  "private": true,
+  "scripts": {
+    "mask": "node mask-images.js"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}
