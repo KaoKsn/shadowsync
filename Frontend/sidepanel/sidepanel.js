@@ -4,7 +4,7 @@
  * Drives the live privacy-preserving browser agent:
  *  1. Captures sanitized DOM + redacted screenshot (PII scrubbed, faces redacted, hint badges added)
  *  2. Dispatches turns to backend at http://localhost:8000 (POST /turn)
- *  3. Executes autonomous actions (CLICK, TYPE, SCROLL) in the live webpage
+ *  3. Executes autonomous actions (CLICK, TYPE, SCROLL, NEW_TAB, GO_BACK, GO_FORWARD) in the live webpage
  *  4. Supports Human-in-the-loop (USER) pauses for 2FA, OTP, Captcha with Resume / Cancel
  *  5. Terminates on DONE or explicit user stop (DELETE /session/{session_id})
  */
@@ -134,6 +134,21 @@
   // TAB RESOLUTION & MESSAGING
   // ══════════════════════════════════════════════════════════════
   async function resolveActiveTab() {
+    if (activeTabId) {
+      const existingTab = await new Promise((resolve) => {
+        chrome.tabs.get(activeTabId, (tab) => {
+          if (!chrome.runtime.lastError && tab && tab.id) {
+            resolve(tab);
+          } else {
+            resolve(null);
+          }
+        });
+      });
+      if (existingTab) {
+        return existingTab;
+      }
+    }
+
     return new Promise((resolve) => {
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
         const valid = tabs?.find((t) => t.id && !t.url?.startsWith('chrome-extension://'));
@@ -164,12 +179,12 @@
   }
 
   function isRestrictedUrl(url) {
-    if (!url) return true;
+    if (!url || typeof url !== 'string') return false;
     return (
       url.startsWith('chrome://') ||
       url.startsWith('brave://') ||
       url.startsWith('edge://') ||
-      url.startsWith('about:') ||
+      (url.startsWith('about:') && url !== 'about:blank') ||
       url.startsWith('chrome-extension://')
     );
   }
@@ -217,6 +232,59 @@
           setTimeout(finish, 400);
         }
       });
+    });
+  }
+
+  /**
+   * Wait for a triggered navigation to complete (loading -> complete),
+   * handling bfcache, instant transitions, and safety fallbacks.
+   */
+  function waitForNavigation(tabId, triggerNavFn, timeoutMs = 15000) {
+    return new Promise(async (resolve) => {
+      let resolved = false;
+      let timer = null;
+      let sawLoading = false;
+
+      function finish() {
+        if (!resolved) {
+          resolved = true;
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          if (timer) clearTimeout(timer);
+          resolve();
+        }
+      }
+
+      function onUpdated(updatedTabId, changeInfo) {
+        if (updatedTabId === tabId) {
+          if (changeInfo.status === 'loading') {
+            sawLoading = true;
+          } else if (changeInfo.status === 'complete') {
+            setTimeout(finish, 500);
+          }
+        }
+      }
+
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      timer = setTimeout(finish, timeoutMs);
+
+      if (typeof triggerNavFn === 'function') {
+        try {
+          await triggerNavFn();
+        } catch (err) {
+          console.warn('[PrivSight] Error during navigation trigger:', err);
+        }
+      }
+
+      // If navigation didn't fire 'loading' (e.g. instant bfcache, about:blank, or history boundary)
+      setTimeout(() => {
+        if (!sawLoading && !resolved) {
+          chrome.tabs.get(tabId, (t) => {
+            if (chrome.runtime.lastError || !t || t.status === 'complete') {
+              finish();
+            }
+          });
+        }
+      }, 1500);
     });
   }
 
@@ -301,9 +369,26 @@
   // ══════════════════════════════════════════════════════════════
   // OVERLAY CONTROLS
   // ══════════════════════════════════════════════════════════════
+  async function unlockTab(tabId) {
+    if (!tabId) return;
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, { type: 'STOP_AGENT', immediate: true }, () => {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    });
+  }
+
   async function lockPage() {
-    let tab = activeTabId ? { id: activeTabId } : await resolveActiveTab();
-    if (!tab?.id) tab = await resolveActiveTab();
+    let tab = await resolveActiveTab();
+    if (!tab?.id && activeTabId) {
+      tab = await new Promise((resolve) => {
+        chrome.tabs.get(activeTabId, (t) => {
+          if (!chrome.runtime.lastError && t) resolve(t);
+          else resolve(null);
+        });
+      });
+    }
     if (!tab?.id || isRestrictedUrl(tab.url)) return;
 
     activeTabId = tab.id;
@@ -319,7 +404,16 @@
 
         if (chrome?.scripting?.executeScript) {
           chrome.scripting.executeScript(
-            { target: { tabId: targetId }, files: ['content/agent.js'] },
+            {
+              target: { tabId: targetId },
+              files: [
+                'content/html2canvas.min.js',
+                'content/redactor.js',
+                'content/faceRedaction.js',
+                'content/qrMask.js',
+                'content/agent.js',
+              ],
+            },
             () => {
               chrome.tabs.sendMessage(targetId, { type: 'START_AGENT' }, () => {
                 sendSessionMessage({ type: 'AGENT_WORKING', tabId: targetId });
@@ -334,20 +428,114 @@
     });
   }
 
-  async function unlockPage() {
+  async function unlockPage(tabIdToUnlock) {
     sendSessionMessage({ type: 'AGENT_IDLE' });
-    let targetId = activeTabId;
+    let targetId = tabIdToUnlock || activeTabId;
     if (!targetId) {
       const tab = await resolveActiveTab();
       targetId = tab?.id;
     }
     if (!targetId) return;
-    return new Promise((resolve) => {
-      chrome.tabs.sendMessage(targetId, { type: 'STOP_AGENT', immediate: true }, () => {
-        void chrome.runtime.lastError;
-        resolve();
+    return unlockTab(targetId);
+  }
+
+  /**
+   * Request browser to open a new tab and switch active context (NEW_TAB)
+   */
+  async function executeNewTabAction(action) {
+    const oldTabId = activeTabId;
+    if (oldTabId) {
+      await unlockTab(oldTabId);
+    }
+
+    let targetUrl = action?.url ? String(action.url).trim() : '';
+    if (!targetUrl) {
+      targetUrl = 'about:blank';
+    } else if (!/^[a-zA-Z]+:\/\//.test(targetUrl) && !targetUrl.startsWith('about:')) {
+      targetUrl = 'https://' + targetUrl;
+    }
+
+    const newTab = await new Promise((resolve, reject) => {
+      chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(tab);
+        }
       });
     });
+
+    if (!newTab?.id) {
+      throw new Error('Failed to create new browser tab.');
+    }
+
+    // Switch active tab tracking to the new tab
+    activeTabId = newTab.id;
+
+    // Ensure the new tab is actively focused
+    await new Promise((resolve) => {
+      chrome.tabs.update(newTab.id, { active: true }, () => resolve());
+    });
+
+    // Wait for the new tab to finish loading
+    await waitForTabReady(newTab.id);
+
+    // Sync session and background worker with the new tabId
+    sendSessionMessage({ type: 'AGENT_WORKING', tabId: activeTabId });
+    sendSessionMessage({ type: 'SESSION_UPDATE', data: { tabId: activeTabId } });
+
+    // Lock page with Aurora overlay
+    await lockPage();
+
+    return { ok: true, navigated: true, tabId: activeTabId, actionType: 'NEW_TAB' };
+  }
+
+  /**
+   * Request browser native history back navigation on current active tab (GO_BACK)
+   */
+  async function executeGoBackAction() {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) {
+      throw new Error('No active browser tab found for GO_BACK.');
+    }
+
+    await waitForNavigation(tab.id, () => {
+      return new Promise((resolve) => {
+        chrome.tabs.goBack(tab.id, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[PrivSight Loop] chrome.tabs.goBack notice:', chrome.runtime.lastError.message);
+          }
+          resolve();
+        });
+      });
+    });
+
+    await lockPage();
+    return { ok: true, navigated: true, tabId: tab.id, actionType: 'GO_BACK' };
+  }
+
+  /**
+   * Request browser native history forward navigation on current active tab (GO_FORWARD)
+   */
+  async function executeGoForwardAction() {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) {
+      throw new Error('No active browser tab found for GO_FORWARD.');
+    }
+
+    await waitForNavigation(tab.id, () => {
+      return new Promise((resolve) => {
+        chrome.tabs.goForward(tab.id, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[PrivSight Loop] chrome.tabs.goForward notice:', chrome.runtime.lastError.message);
+          }
+          resolve();
+        });
+      });
+    });
+
+    await lockPage();
+    return { ok: true, navigated: true, tabId: tab.id, actionType: 'GO_FORWARD' };
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -367,6 +555,13 @@
       addMessage('agent', `PrivSight cannot run on internal browser URLs (${tab.url}). Please open a regular website first.`);
       return;
     }
+    if (tab?.id) activeTabId = tab.id;
+
+    // Immediately lock main browser interaction and engage Aurora overlay
+    // Also hide the Gemini idle glow — restored after agent completes
+    document.body.classList.add('agent-active');
+    await lockPage();
+
 
     let currentDomain = 'Unknown';
     if (tab && tab.url) {
@@ -505,6 +700,28 @@
             break;
           }
 
+          case 'NEW_TAB': {
+            updateAgentStatus('executing');
+            const targetDisplay = turnResponse.url || 'blank tab';
+            renderActivity('executing', `Opening new tab: ${targetDisplay}...`);
+            execResult = await executeNewTabAction(turnResponse);
+            break;
+          }
+
+          case 'GO_BACK': {
+            updateAgentStatus('executing');
+            renderActivity('executing', 'Navigating back in tab history...');
+            execResult = await executeGoBackAction();
+            break;
+          }
+
+          case 'GO_FORWARD': {
+            updateAgentStatus('executing');
+            renderActivity('executing', 'Navigating forward in tab history...');
+            execResult = await executeGoForwardAction();
+            break;
+          }
+
           case 'USER': {
             // Pause loop, display instruction, wait for user confirmation
             updateAgentStatus('user_action');
@@ -587,20 +804,21 @@
       }
 
       console.error('[PrivSight Loop] Execution failed:', error);
-      await unlockPage();
-      updateAgentStatus('error');
-      renderActivity(null);
-
       const msg = error.message?.includes('Failed to fetch')
         ? 'Could not connect to backend at http://localhost:8000. Please ensure the agent backend server is running and accessible.'
         : `Agent error: ${error.message}`;
 
       addMessage('agent', `❌ ${msg}`);
+      await unlockPage();
+      updateAgentStatus('error');
+      renderActivity(null);
     } finally {
       setTimeout(() => {
         if (currentStatus === 'completed' || currentStatus === 'error') {
           updateAgentStatus('idle');
         }
+        // Restore Gemini idle glow once agent is done
+        document.body.classList.remove('agent-active');
       }, 5000);
     }
   }
@@ -623,10 +841,14 @@
     }
 
     if (el.userPrompt) el.userPrompt.style.display = 'none';
+    addMessage('agent', 'Task stopped by user.');
     await unlockPage();
     updateAgentStatus('idle');
     renderActivity(null);
+    // Restore Gemini idle glow
+    document.body.classList.remove('agent-active');
   }
+
 
   // ══════════════════════════════════════════════════════════════
   // UI HELPERS
@@ -648,22 +870,24 @@
     el.input.disabled = isWorking;
     el.sendBtn.disabled = isWorking;
 
-    el.privDot.className = `ps-priv-dot ${isWorking ? 'working' : ''}`;
-    el.privacyBadgeTxt.textContent = isWorking ? 'Working' : status === 'completed' ? 'Protected' : 'Protected';
+    if (el.privDot) el.privDot.className = `ps-priv-dot ${isWorking ? 'working' : ''}`;
+    if (el.privacyBadgeTxt) el.privacyBadgeTxt.textContent = isWorking ? 'Working' : status === 'completed' ? 'Protected' : 'Protected';
   }
 
   function updatePrivacyStats(data) {
-    animateNumber(el.statFound, stats.dataFound, data.dataFound);
-    animateNumber(el.statRecognized, stats.sensitiveRecognized, data.sensitiveRecognized);
-    animateNumber(el.statRemoved, stats.sensitiveRemoved, data.sensitiveRemoved);
+    if (el.statFound) animateNumber(el.statFound, stats.dataFound, data.dataFound);
+    if (el.statRecognized) animateNumber(el.statRecognized, stats.sensitiveRecognized, data.sensitiveRecognized);
+    if (el.statRemoved) animateNumber(el.statRemoved, stats.sensitiveRemoved, data.sensitiveRemoved);
 
     stats = { ...data };
 
-    const pct = data.sensitiveRecognized > 0
-      ? (data.sensitiveRemoved / data.sensitiveRecognized) * 100
-      : 100;
-    el.barFill.style.width = `${Math.min(pct, 100)}%`;
-    el.barFill.classList.toggle('partial', pct < 100 && pct > 0);
+    if (el.barFill) {
+      const pct = data.sensitiveRecognized > 0
+        ? (data.sensitiveRemoved / data.sensitiveRecognized) * 100
+        : 100;
+      el.barFill.style.width = `${Math.min(pct, 100)}%`;
+      el.barFill.classList.toggle('partial', pct < 100 && pct > 0);
+    }
   }
 
   function animateNumber(element, from, to) {
@@ -759,14 +983,27 @@
   }
 
   // ══════════════════════════════════════════════════════════════
-  // EVENT HANDLERS
+  // EVENT HANDLERS & INPUT AUTO-RESIZE
   // ══════════════════════════════════════════════════════════════
+  function adjustInputHeight() {
+    if (!el.input) return;
+    el.input.style.height = 'auto';
+    const singleLineH = 22;
+    const maxH = 140;
+    const scrollH = el.input.scrollHeight;
+    const targetH = Math.min(Math.max(scrollH, singleLineH), maxH);
+    el.input.style.height = `${targetH}px`;
+    el.input.style.overflowY = scrollH > maxH ? 'auto' : 'hidden';
+  }
+
   function handleSend() {
     const text = el.input.value.trim();
     if (!text) return;
     if (STATUS_META[currentStatus]?.working) return;
 
     el.input.value = '';
+    adjustInputHeight();
+    lockPage();
     startAgent(text);
   }
 
@@ -776,6 +1013,8 @@
     const prompt = chip.dataset.prompt;
     if (prompt && !STATUS_META[currentStatus]?.working) {
       el.input.value = prompt;
+      adjustInputHeight();
+      lockPage();
       startAgent(prompt);
     }
   }
@@ -798,7 +1037,14 @@
       activeTabId = info.tabId;
     });
 
+    chrome.tabs.onRemoved.addListener((closedTabId) => {
+      if (activeTabId === closedTabId) {
+        activeTabId = null;
+      }
+    });
+
     el.sendBtn.addEventListener('click', handleSend);
+    el.input.addEventListener('input', adjustInputHeight);
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -833,6 +1079,9 @@
   }
 
   window.addEventListener('pagehide', () => {
+    if (STATUS_META[currentStatus]?.working) {
+      unlockPage();
+    }
     if (currentSessionId) {
       AgentBackendClient.deleteSession(currentSessionId).catch(() => {});
     }

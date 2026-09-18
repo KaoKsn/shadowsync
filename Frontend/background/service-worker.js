@@ -145,30 +145,19 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 
     port.onDisconnect.addListener(async () => {
-      await clearExecutionState();
-      // If the extension window closed while active, kill the in-page Aurora overlay immediately
-      if (targetTabId) {
-        chrome.tabs.sendMessage(targetTabId, { type: 'STOP_AGENT', immediate: true }, () => {
-          void chrome.runtime.lastError;
-        });
-      }
-      // Broadcast to active tab in lastFocusedWindow and all active tabs as a guaranteed safety measure
-      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        if (tabs && tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'STOP_AGENT', immediate: true }, () => {
-            void chrome.runtime.lastError;
-          });
-        }
-      });
-      chrome.tabs.query({ active: true }, (tabs) => {
-        tabs?.forEach((t) => {
-          if (t.id) {
-            chrome.tabs.sendMessage(t.id, { type: 'STOP_AGENT', immediate: true }, () => {
+      const disconnectedTabId = targetTabId;
+      // Debounce disconnect cleanup to avoid killing Aurora overlay during normal MV3 port recycles
+      setTimeout(async () => {
+        const state = await getExecutionState();
+        if (!state || !state.isRunning) {
+          await clearExecutionState();
+          if (disconnectedTabId) {
+            chrome.tabs.sendMessage(disconnectedTabId, { type: 'STOP_AGENT', immediate: true }, () => {
               void chrome.runtime.lastError;
             });
           }
-        });
-      });
+        }
+      }, 2500);
     });
   }
 });

@@ -138,8 +138,21 @@ html, body {
   gap: 8px;
 }
 
-.logo-icon {
+.logo-icon,
+.logo-icon-img {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  object-fit: contain;
   flex-shrink: 0;
+  display: block;
+  filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.6));
+  transition: transform 0.2s ease;
+}
+
+.logo-icon-img:hover {
+  transform: scale(1.1);
 }
 
 .brand-title {

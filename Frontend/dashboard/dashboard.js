@@ -30,6 +30,12 @@
     totalRemoved:   $('db-total-removed'),
     protectionRate: $('db-protection-rate'),
 
+    // Pipeline card (moved from sidepanel)
+    pipelineFound:     $('db-pipeline-found'),
+    pipelineSensitive: $('db-pipeline-sensitive'),
+    pipelineRemoved:   $('db-pipeline-removed'),
+    pipelineBarFill:   $('db-pipeline-bar-fill'),
+
     // Sections
     empty:          $('db-empty'),
     grid:           $('db-grid'),
@@ -133,6 +139,13 @@
     animateNumber(el.totalSensitive, totalSensitive);
     animateNumber(el.totalRemoved,   totalRemoved);
     animateNumber(el.protectionRate, rate, '%');
+
+    if (el.pipelineFound)     animateNumber(el.pipelineFound, totalFound);
+    if (el.pipelineSensitive) animateNumber(el.pipelineSensitive, totalSensitive);
+    if (el.pipelineRemoved)   animateNumber(el.pipelineRemoved, totalRemoved);
+    if (el.pipelineBarFill) {
+      el.pipelineBarFill.style.width = `${Math.min(rate, 100)}%`;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════

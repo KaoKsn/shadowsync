@@ -39,6 +39,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "match_about_blank": true,
       "js": [
         "content/html2canvas.min.js",
         "content/redactor.js",
@@ -53,6 +54,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "icons/*.png",
         "face_detection_yunet_2023mar.onnx",
         "ort-wasm-simd-threaded.wasm",
         "ort-wasm-simd-threaded.mjs",

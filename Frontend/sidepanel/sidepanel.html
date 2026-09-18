@@ -12,6 +12,12 @@
 <body>
 
 
+<!-- Gemini-style ambient idle glow ── hidden once agent runs ── -->
+  <div id="ps-glow-orbs" aria-hidden="true">
+    <div class="ps-glow-orb ps-glow-orb--bottom"></div>
+    <div class="ps-glow-orb ps-glow-orb--top"></div>
+  </div>
+
   <!-- ══════════════════════════════════════════════════════
        TOP TOOLBAR / HEADER — logo, status, dashboard, theme, close
   ══════════════════════════════════════════════════════ -->
@@ -19,13 +25,7 @@
     <!-- Left: logo + status -->
     <div class="ps-toolbar__left">
       <div class="ps-logo" id="ps-logo">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
-          <path d="M3.5 15.5L7 18L3.5 20"/>
-          <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
-          <circle cx="13.5" cy="12.5" r="3"/>
-          <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
-        </svg>
+        <img src="../icons/icon48.png" alt="PrivSight" class="ps-logo-img">
       </div>
       <div class="ps-status-badge" id="ps-status-badge">
         <span class="ps-status-dot" id="ps-status-dot"></span>
@@ -59,14 +59,10 @@
 
       <!-- IDLE PLACEHOLDER (shown when no messages) -->
       <div class="ps-idle" id="ps-idle">
+
+
         <div class="ps-idle__icon">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
-            <path d="M3.5 15.5L7 18L3.5 20"/>
-            <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
-            <circle cx="13.5" cy="12.5" r="3"/>
-            <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
-          </svg>
+          <img src="../icons/icon256.png" alt="PrivSight" class="ps-idle__logo-img">
         </div>
         <h2 class="ps-idle__title">How can I help on this page?</h2>
         <p class="ps-idle__sub">PrivSight can interact with the current page while keeping your sensitive information protected.</p>
@@ -116,15 +112,14 @@
     <!-- Input row -->
     <div class="ps-input-row" id="ps-input-row">
       <div class="ps-input-wrap">
-        <input
-          type="text"
+        <textarea
           class="ps-input"
           id="ps-input"
+          rows="1"
           placeholder="Ask PrivSight to do something..."
-          autocomplete="off"
-          maxlength="500"
+          maxlength="2000"
           aria-label="Ask PrivSight"
-        />
+        ></textarea>
         <button class="ps-send-btn" id="ps-send-btn" aria-label="Send" title="Send">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -133,35 +128,7 @@
       </div>
     </div>
 
-    <!-- Privacy protection stats -->
-    <div class="ps-privacy" id="ps-privacy">
-      <div class="ps-privacy__header">
-        <span class="ps-privacy__label">Privacy Protection</span>
-        <span class="ps-privacy__badge" id="ps-privacy-badge">
-          <span class="ps-priv-dot" id="ps-priv-dot"></span>
-          <span id="ps-privacy-badge-text">Protected</span>
-        </span>
-      </div>
-      <div class="ps-privacy__stats">
-        <div class="ps-stat">
-          <span class="ps-stat__num" id="ps-stat-found">0</span>
-          <span class="ps-stat__lbl">Data found</span>
-        </div>
-        <div class="ps-stat__arrow">→</div>
-        <div class="ps-stat">
-          <span class="ps-stat__num" id="ps-stat-recognized">0</span>
-          <span class="ps-stat__lbl">Sensitive</span>
-        </div>
-        <div class="ps-stat__arrow">→</div>
-        <div class="ps-stat">
-          <span class="ps-stat__num" id="ps-stat-removed">0</span>
-          <span class="ps-stat__lbl">Removed</span>
-        </div>
-      </div>
-      <div class="ps-privacy__bar" id="ps-privacy-bar">
-        <div class="ps-privacy__bar-fill" id="ps-privacy-bar-fill"></div>
-      </div>
-    </div>
+
 
   </footer>
   <script src="lib/marked.umd.js"></script>

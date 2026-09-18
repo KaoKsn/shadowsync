@@ -260,7 +260,7 @@
   // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
-  const BASE_URL = 'http://10.156.193.248:8000';
+  const BASE_URL = 'http://10.35.119.248:8000';
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Minimum gap between consecutive backend requests (in milliseconds).
@@ -312,10 +312,11 @@
      * @param {string} params.sanitizedScreenshotB64 - Raw base64, no data: prefix
      * @returns {Promise<{
      *   session_id: string,
-     *   type: 'CLICK' | 'TYPE' | 'SCROLL' | 'DONE' | 'USER',
+     *   type: 'CLICK' | 'TYPE' | 'SCROLL' | 'DONE' | 'USER' | 'NEW_TAB' | 'GO_BACK' | 'GO_FORWARD',
      *   data_hint: string | null,
      *   element_id: string | null,
      *   text: string | null,
+     *   url: string | null,
      *   reasoning: string | null,
      *   is_complete: boolean
      * }>}
