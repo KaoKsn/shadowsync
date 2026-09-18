@@ -16,6 +16,7 @@ def respond(state: AgentState) -> AgentState:
         "data_hint": action.get("data_hint"),
         "element_id": action.get("element_id"),
         "text": action.get("text"),
+        "url": action.get("url"),
         "reasoning": action.get("reasoning"),
         "is_complete": state["is_complete"],
     }

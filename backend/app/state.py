@@ -17,10 +17,11 @@ class ElementRef(TypedDict):
 
 class AgentAction(TypedDict):
     """A single action the agent wants the client to execute."""
-    type: Literal["CLICK", "TYPE", "SCROLL", "DONE", "USER"]
+    type: Literal["CLICK", "TYPE", "SCROLL", "DONE", "USER", "NEW_TAB", "GO_BACK", "GO_FORWARD"]
     data_hint: Optional[str]    # matches ElementRef.data_hint of the target element
     element_id: Optional[str]   # native HTML id of the target element, if known
     text: Optional[str]         # TYPE: text to type. USER: instruction for the human. unused otherwise
+    url: Optional[str]          # NEW_TAB: url to open (null = blank tab). unused otherwise
     reasoning: Optional[str]    # short justification from the model, useful for debugging/demo
 
 

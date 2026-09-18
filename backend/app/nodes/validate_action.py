@@ -19,6 +19,7 @@ def _invalid(state: AgentState, message: str) -> AgentState:
                 "I'm having trouble completing this step automatically. "
                 "Could you please take over and perform it manually?"
             ),
+            url=None,
             reasoning=f"Exceeded max retries ({settings.max_retries}): {message}",
         )
         state["is_valid"] = True
@@ -55,8 +56,8 @@ def validate_action(state: AgentState) -> AgentState:
         state["error"] = None
         return state
 
-    if action_type == "SCROLL":
-        # scrolling acts on the page, not a specific element -- no data_hint needed
+    if action_type in ("SCROLL", "GO_BACK", "GO_FORWARD", "NEW_TAB"):
+        # these act on the page/browser itself, not a specific element -- no data_hint needed
         state["is_valid"] = True
         state["is_complete"] = False
         state["error"] = None

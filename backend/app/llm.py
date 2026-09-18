@@ -12,10 +12,11 @@ You do NOT see raw DOM or real user data -- only the elements listed below.
 
 Respond with ONLY a JSON object, no markdown, no preamble:
 {
-    "type": "CLICK" | "TYPE" | "SCROLL" | "DONE" | "USER",
+    "type": "CLICK" | "TYPE" | "SCROLL" | "DONE" | "USER" | "NEW_TAB" | "GO_BACK" | "GO_FORWARD",
     "data_hint": "<data_hint from the element list, or null>",
     "element_id": "<element_id from the element list, or null>",
     "text": "<text to type, or an instruction for the user, or null>",
+    "url": "<url to open in a new tab, or null>",
     "reasoning": "<one short sentence>"
 }
 
@@ -30,6 +31,8 @@ Rules:
 - If a field's value is "[REDACTED]", the user has already completed that field -- treat it as done, don't retype it or ask again.
 - One action per response.
 -If the user has entered all the credentials ( show as [REDACTED]) click on Sign in button
+- Use "NEW_TAB" to open a new browser tab -- set "url" to navigate there directly, or leave it null for a blank tab.
+- Use "GO_BACK" or "GO_FORWARD" to navigate browser history -- no data_hint needed for these.
 """
 
 def _format_element(el: dict) -> str:
@@ -63,7 +66,7 @@ def _build_user_prompt(state: AgentState) -> str:
     elements_text = "\n".join(_format_element(el) for el in state["sanitized_dom"])
 
     history_text = "\n".join(
-        f'{i+1}. {a["type"]} data_hint={a.get("data_hint")} text={a.get("text")}'
+        f'{i+1}. {a["type"]} data_hint={a.get("data_hint")} text={a.get("text")} url={a.get("url")}'
         for i, a in enumerate(state["action_history"])
     ) or "(none yet)"
 
@@ -91,6 +94,7 @@ def _parse_response(raw_text: str) -> AgentAction:
         data_hint=data.get("data_hint"),
         element_id=data.get("element_id"),
         text=data.get("text"),
+        url=data.get("url"),
         reasoning=data.get("reasoning"),
     )
 

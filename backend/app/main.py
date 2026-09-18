@@ -71,6 +71,7 @@ class TurnResponse(BaseModel):
     data_hint: Optional[str] = None
     element_id: Optional[str] = None
     text: Optional[str] = None
+    url: Optional[str] = None
     reasoning: Optional[str] = None
     is_complete: bool
 
