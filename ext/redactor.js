@@ -1824,9 +1824,24 @@
     }
 
 
-    function replacement() {
+    function optionsFor(
+        stats
+    ) {
 
-        return CONFIG.replacement;
+        return (
+            stats &&
+            stats.options
+        ) || CONFIG;
+    }
+
+
+    function replacement(
+        stats
+    ) {
+
+        return optionsFor(
+            stats
+        ).replacement;
     }
 
 
@@ -2411,7 +2426,7 @@
                 );
 
 
-                return replacement();
+                return replacement(stats);
             }
         );
     }
@@ -2452,7 +2467,7 @@
                         );
 
 
-                        return replacement();
+                        return replacement(stats);
                     }
                 );
         }
@@ -2473,7 +2488,9 @@
     ) {
 
         if (
-            !CONFIG.aggressive
+            !optionsFor(
+                stats
+            ).aggressive
         ) {
 
             return text;
@@ -2627,7 +2644,7 @@
                 );
 
 
-                return replacement();
+                return replacement(stats);
             }
         );
     }
@@ -2739,7 +2756,7 @@
                 );
 
 
-                return replacement();
+                return replacement(stats);
             }
         );
     }
@@ -3011,6 +3028,20 @@
 
 
             /*
+               Controls and actions are not field-display values.
+            */
+
+            if (
+                element.matches(
+                    "button,a,input,textarea,select,option,[role='button']"
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
                Only leaf elements.
             */
 
@@ -3187,7 +3218,7 @@
 
                 +
 
-                replacement()
+                replacement(stats)
 
                 +
 
@@ -3591,6 +3622,20 @@
         ) {
 
             /*
+               Preserve controls within protected regions.
+            */
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
                Preserve placeholder.
             */
 
@@ -3660,7 +3705,7 @@
 
                 ||
 
-                /password|email|tel|phone|card|number|date|hidden/i
+                /password|email|tel|phone|card|date|hidden/i
                     .test(
                         type
                     );
@@ -3672,20 +3717,48 @@
                 element.value
             ) {
 
-                element.value =
-                    replacement();
-
-
                 if (
-                    element.hasAttribute(
-                        "value"
-                    )
+                    element.tagName.toLowerCase() ===
+                        "select"
                 ) {
 
-                    element.setAttribute(
-                        "value",
-                        replacement()
-                    );
+                    for (
+                        const option
+                        of Array.from(
+                            element.options
+                        )
+                    ) {
+
+                        if (!option.selected) {
+                            continue;
+                        }
+
+
+                        option.value =
+                            replacement(stats);
+
+
+                        option.textContent =
+                            replacement(stats);
+                    }
+
+                } else {
+
+                    element.value =
+                        replacement(stats);
+
+
+                    if (
+                        element.hasAttribute(
+                            "value"
+                        )
+                    ) {
+
+                        element.setAttribute(
+                            "value",
+                            replacement(stats)
+                        );
+                    }
                 }
 
 
@@ -3813,7 +3886,7 @@
 
                     element.setAttribute(
                         attribute.name,
-                        replacement()
+                        replacement(stats)
                     );
 
 
@@ -3847,7 +3920,7 @@
 
                     element.setAttribute(
                         attribute.name,
-                        replacement()
+                        replacement(stats)
                     );
 
 
@@ -3925,7 +3998,7 @@
                 ) {
 
                     element.dataset[key] =
-                        replacement();
+                        replacement(stats);
 
 
                     increment(
@@ -4058,7 +4131,7 @@
 
                     url.searchParams.set(
                         key,
-                        replacement()
+                        replacement(stats)
                     );
 
 
@@ -4218,7 +4291,7 @@
 
                 element.setAttribute(
                     "content",
-                    replacement()
+                    replacement(stats)
                 );
 
 
@@ -4330,7 +4403,7 @@
 
     function createStats() {
 
-        return {
+        const stats = {
 
             total:
                 0,
@@ -4347,6 +4420,25 @@
             duration:
                 0
         };
+
+
+        Object.defineProperty(
+            stats,
+            "options",
+            {
+                value:
+                    CONFIG,
+
+                enumerable:
+                    false,
+
+                configurable:
+                    true
+            }
+        );
+
+
+        return stats;
     }
 
 
@@ -4383,6 +4475,22 @@
 
             const stats =
                 createStats();
+
+
+            Object.defineProperty(
+                stats,
+                "options",
+                {
+                    value:
+                        this.options,
+
+                    enumerable:
+                        false,
+
+                    configurable:
+                        true
+                }
+            );
 
 
             let html;
