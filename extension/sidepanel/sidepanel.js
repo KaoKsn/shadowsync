@@ -541,7 +541,7 @@
   // ══════════════════════════════════════════════════════════════
   // AGENT EXECUTION LOOP (Backend Integration Guide)
   // ══════════════════════════════════════════════════════════════
-  const MAX_SAFETY_TURNS = 25;
+  const MAX_SAFETY_TURNS = 5;
 
   /**
    * startAgent(prompt)

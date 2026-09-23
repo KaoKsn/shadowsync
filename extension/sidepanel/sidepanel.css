@@ -626,7 +626,7 @@ body::after {
   word-break: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
-  padding: 2px 0 0;
+  padding: 1px 0 2px;
   scrollbar-width: thin;
   scrollbar-color: var(--gb2) transparent;
 }

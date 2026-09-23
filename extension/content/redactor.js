@@ -1,722 +1,4942 @@
-/**
- * Local DOM Sanitizer Engine (redactor.js)
- *
- * Features:
- * - Local PII Scrubbing (Emails, Passwords, Credit Cards with Luhn check, SSNs, Phone Numbers, JWTs, Bearer Tokens, API Keys, Usernames, Account Holder Names)
- * - Targeted DOM Nodes & Attributes (Text nodes, input/textarea values, placeholder, aria-label, title, alt, href)
- * - Preserves Mapping Integrity (Keeps data-* attributes, tag types, IDs, and structure intact)
- * - Accepts DOM Document / HTML String / File and outputs sanitized DOM Document / HTML File / String.
- */
+(function () {
+    "use strict";
 
-(function (global, factory) {
-  if (typeof exports === "object" && typeof module !== "undefined") {
-    module.exports = factory();
-  } else if (typeof define === "function" && define.amd) {
-    define(factory);
-  } else {
-    global.DOMRedactor = factory();
-  }
-})(typeof self !== "undefined" ? self : this, function () {
-  "use strict";
+    /*
+    ============================================================
+                       DOM PII REDACTOR
+    ============================================================
 
-  // --- Luhn Algorithm Validator ---
-  function isValidLuhn(numberStr) {
-    const digits = numberStr.replace(/\D/g, "");
-    if (digits.length < 13 || digits.length > 19) return false;
-    let sum = 0;
-    let shouldDouble = false;
-    for (let i = digits.length - 1; i >= 0; i--) {
-      let digit = parseInt(digits.charAt(i), 10);
-      if (shouldDouble) {
-        digit *= 2;
-        if (digit > 9) digit -= 9;
-      }
-      sum += digit;
-      shouldDouble = !shouldDouble;
-    }
-    return sum % 10 === 0;
-  }
+    FEATURES
 
-  // --- Regex Patterns for PII ---
-  const PII_PATTERNS = {
-    // JSON Web Token (JWT)
-    jwt: /\beyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*\b/g,
+    - Redacts PII values
+    - Preserves h1-h6
+    - Preserves header
+    - Preserves legend
+    - Preserves field labels
+    - Preserves placeholders
+    - Redacts field values
+    - Redacts dates
+    - Redacts DOB
+    - Redacts father name
+    - Redacts mother's name
+    - Redacts phone numbers
+    - Redacts emails
+    - Redacts Aadhaar
+    - Redacts PAN
+    - Redacts IFSC
+    - Redacts bank details
+    - Redacts card numbers
+    - Redacts identifiers
+    - Redacts addresses
+    - Redacts vehicle information
+    - Redacts digital identifiers
 
-    // Bearer Token
-    bearer: /\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/gi,
+    ============================================================
+    */
 
-    // Aadhaar Number
-    aadhaar: /\b(?:\d{4}[\s-]?){2}\d{4}\b/g,
+    /* =========================================================
+       CONFIGURATION
+       ========================================================= */
 
-    // Known Vendor & Provider API Keys (OpenAI, Anthropic, OpenRouter, HuggingFace, Replicate, AWS, GitHub, Google, Stripe, Slack, SendGrid, Twilio, Resend, Supabase)
-    vendorApiKey:
-      /\b(?:sk-proj-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}|sk-or-v1-[a-zA-Z0-9_-]{20,}|sk-[a-zA-Z0-9_-]{20,}|hf_[a-zA-Z0-9]{32,}|r8_[a-zA-Z0-9]{32,}|(?:AKIA|ASIA|AGPA|AIPA|ANPA|ANVA|AROA)[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr|github_pat)_[a-zA-Z0-9_]{20,}|AIzaSy[A-Za-z0-9_-]{33}|(?:sk|pk|rk)_(?:live|test)_[0-9a-zA-Z]{24,34}|xox[baprs]-[0-9a-zA-Z-]{10,64}|SG\.[a-zA-Z0-9_-]{10,32}\.[a-zA-Z0-9_-]{20,64}|SK[0-9a-fA-F]{32}|sbp_[a-zA-Z0-9]{40,}|re_[a-zA-Z0-9]{24,}|sq0idp-[0-9A-Za-z-_]{22})\b/g,
+    const CONFIG = {
 
-    // Contextual API Key & Secret patterns (e.g. API Key: <key>, X-API-KEY: <key>, secret_key: "<key>", apiKey = "<key>")
-    contextualApiKey:
-      /\b(?:api[\s_-]?key|x[\s_-]?api[\s_-]?key|secret[\s_-]?key|access[\s_-]?token|auth[\s_-]?token|private[\s_-]?key|client[\s_-]?secret|api[\s_-]?secret)\s*[:=]\s*['"]?([a-zA-Z0-9_\-.~+/=]{8,})['"]?/gi,
+        replacement:
+            "[REDACTED]",
 
-    // Key-value pairs for secrets in strings/URLs (e.g., api_key=xyz, secret=abc, token=123)
-    secretParam:
-      /([?&]?(?:api[\s_-]?key|x[\s_-]?api[\s_-]?key|access[\s_-]?token|auth[\s_-]?token|secret|password|pwd|token)=)[^&%\s]+/gi,
+        aggressive:
+            true,
 
-    // 32-64 character standalone hex API keys / secrets (e.g., 4a8f9c1e2d3b4a5b6c7d8e9f0a1b2c3d)
-    genericHexKey: /\b[a-fA-F0-9]{32,64}\b/g,
+        scanText:
+            true,
 
-    // Email address
-    email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+        scanFieldValues:
+            true,
 
-    // US Social Security Number (SSN)
-    ssn: /\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g,
+        scanForms:
+            true,
 
-    // Phone Numbers (US & International formats: +1 (555) 234-5678, +91 9876543210, 555-234-5678)
-    phone: /(?:\+\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g,
+        scanAttributes:
+            true,
 
-    pan: /\b[A-Z]{5}[0-9]{4}[A-Z]\b/gi,
+        scanDataset:
+            true,
 
-    ifsc: /\b[A-Z]{4}0[A-Z0-9]{6}\b/gi,
+        scanURLs:
+            true,
 
-    vehicleRegistration:
-      /\b[A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{1,3}[\s-]?\d{1,4}\b/gi,
+        scanComments:
+            true,
 
-    indianPassport: /\b[A-Z][0-9]{7}\b/gi,
-    // Account Holder, Cardholder, and Person Name contextual patterns (handles single & multiline names)
-    nameContext:
-      /\b(?:Account\s+(?:holder|owner|name)|Registered\s+(?:holder|owner|name)|Cardholder(?:\s+name)?|Card\s+holder|User\s*name|Username|Logged\s+in\s+as|Full\s+name|First\s+name|Last\s+name|Customer\s+name|Member\s+name|Billing\s+name|Shipping\s+name|Contact\s+name|Owner\s+name|Holder\s+name|Account\s+User|User\s+Profile|Holder)\s*[:=]\s*([A-Za-z0-9.\s'-]{2,50}?)(?=\s*(?:Registered\s|Email|Phone|SSN|Address|Card|Status|ID|<|$))/gi,
-  };
+        scanMeta:
+            true,
 
-  /**
-   * Redacts PII in a given text string.
-   * @param {string} text
-   * @param {object} stats - Counter object to track redactions by type
-   * @returns {string} Redacted text
-   */
-  function redactString(text, stats) {
-    if (!text || typeof text !== "string") return text;
+        scanAccessibility:
+            true,
 
-    let result = text;
+        scanStyles:
+            true
+    };
 
-    function recordRedaction(type, count = 1) {
-      if (stats && stats[type] !== undefined) {
-        stats[type] += count;
-      }
-    }
 
-    // Indian PAN
-    result = result.replace(PII_PATTERNS.pan, (match) => {
-      recordRedaction("pan");
-      return "[REDACTED]";
-    });
+    /* =========================================================
+       PII LABEL DATABASE
+       ========================================================= */
 
-    // IFSC
-    result = result.replace(PII_PATTERNS.ifsc, (match) => {
-      recordRedaction("ifsc");
-      return "[REDACTED]";
-    });
+    const PII_LABELS = {
 
-    // Vehicle registration
-    result = result.replace(PII_PATTERNS.vehicleRegistration, (match) => {
-      recordRedaction("vehicleRegistration");
-      return "[REDACTED]";
-    });
+        /* =====================================================
+           IDENTITY
+           ===================================================== */
 
-    // Indian passport
-    result = result.replace(PII_PATTERNS.indianPassport, (match) => {
-      recordRedaction("indianPassport");
-      return "[REDACTED]";
-    });
+        name: [
 
-    // 1. Redact JWTs
-    result = result.replace(PII_PATTERNS.jwt, (match) => {
-      recordRedaction("jwt");
-      return "[REDACTED]";
-    });
+            "name",
+            "full name",
+            "fullname",
 
-    // Redact Aadhaar numbers
-    result = result.replace(PII_PATTERNS.aadhaar, (match) => {
-      recordRedaction("aadhaar");
-      return "[REDACTED]";
-    });
+            "first name",
+            "firstname",
 
-    // 2. Redact Bearer Tokens
-    result = result.replace(PII_PATTERNS.bearer, (match) => {
-      recordRedaction("bearer");
-      return "[REDACTED]";
-    });
+            "given name",
 
-    // 3. Redact Vendor API Keys
-    result = result.replace(PII_PATTERNS.vendorApiKey, (match) => {
-      recordRedaction("apiKey");
-      return "[REDACTED]";
-    });
+            "middle name",
 
-    // 4. Redact Contextual API Keys (e.g. API Key: 12345..., secret_key: "abc...")
-    result = result.replace(PII_PATTERNS.contextualApiKey, (match, keyVal) => {
-      recordRedaction("apiKey");
-      return match.replace(keyVal, "[REDACTED]");
-    });
+            "last name",
+            "lastname",
+            "surname",
+            "family name",
 
-    // 5. Redact URL / Parameter Secrets
-    result = result.replace(PII_PATTERNS.secretParam, (match, prefix) => {
-      recordRedaction("apiKey");
-      return prefix + "[REDACTED]";
-    });
+            "legal name",
+            "display name",
+            "preferred name",
+            "nickname",
 
-    // 6. Redact Generic Hex API Keys / Secrets (32-64 hex chars)
-    result = result.replace(PII_PATTERNS.genericHexKey, (match) => {
-      recordRedaction("apiKey");
-      return "[REDACTED]";
-    });
+            "person name",
+            "personal name",
 
-    // 7. Redact Emails
-    result = result.replace(PII_PATTERNS.email, (match) => {
-      recordRedaction("email");
-      return "[REDACTED]";
-    });
+            "customer name",
+            "client name",
+            "patient name",
+            "employee name",
+            "student name",
 
-    // 8. Redact SSNs
-    result = result.replace(PII_PATTERNS.ssn, (match) => {
-      recordRedaction("ssn");
-      return "[REDACTED]";
-    });
+            "applicant name",
+            "candidate name",
 
-    // 9. Credit Card Numbers (using Luhn Validation BEFORE phone regex)
-    // Match sequence of digits with optional spaces or hyphens (13 to 19 digits)
-    const creditCardCandidateRegex = /\b(?:\d[ -]*?){13,19}\b/g;
-    result = result.replace(creditCardCandidateRegex, (match) => {
-      const rawDigits = match.replace(/\D/g, "");
-      if (
-        rawDigits.length >= 13 &&
-        rawDigits.length <= 19 &&
-        isValidLuhn(rawDigits)
-      ) {
-        recordRedaction("creditCard");
-        return "[REDACTED]";
-      }
-      return match;
-    });
+            "account holder",
+            "account holder name",
 
-    // 10. Redact Phone Numbers (processed AFTER credit cards so 16-digit cards aren't split as phones)
-    result = result.replace(PII_PATTERNS.phone, (match) => {
-      recordRedaction("phone");
-      return "[REDACTED]";
-    });
+            "beneficiary name",
+            "recipient name",
+            "sender name",
 
-    // 11. Redact Account Holder & User Names (Contextual)
-    result = result.replace(PII_PATTERNS.nameContext, (match, nameVal) => {
-      if (!nameVal || !nameVal.trim()) return match;
-      recordRedaction("username");
-      return match.replace(nameVal, "[REDACTED]");
-    });
+            "card holder",
+            "cardholder",
+            "card holder name",
 
-    return result;
-  }
+            "name on card"
+        ],
 
-  /**
-   * Sanitizes href attributes specifically.
-   * @param {string} href
-   * @param {object} stats
-   */
-  function redactHref(href, stats) {
-    if (!href) return href;
-    if (href.startsWith("mailto:")) {
-      const emailPart = href.substring(7);
-      const redactedEmail = redactString(emailPart, stats);
-      return "mailto:" + redactedEmail;
-    }
-    if (href.startsWith("tel:")) {
-      if (stats && stats.phone !== undefined) stats.phone++;
-      return "tel:[REDACTED]";
-    }
-    return redactString(href, stats);
-  }
 
-  class DOMRedactor {
-    /**
-     * @param {object} options
-     */
-    constructor(options = {}) {
-      this.options = Object.assign(
+        customer_id: [
+
+            "customer id",
+            "customer number",
+            "customer no",
+
+            "client id",
+            "client number",
+
+            "user id",
+            "user identifier",
+
+            "profile id",
+            "profile number"
+        ],
+
+
+        /* =====================================================
+           CONTACT
+           ===================================================== */
+
+        email: [
+
+            "email",
+            "email address",
+
+            "e-mail",
+            "e-mail address",
+
+            "personal email",
+            "work email",
+            "business email",
+
+            "alternate email",
+            "secondary email",
+
+            "primary email"
+        ],
+
+
+        phone: [
+
+            "phone",
+            "phone number",
+
+            "mobile",
+            "mobile number",
+
+            "telephone",
+            "telephone number",
+
+            "contact number",
+            "contact phone",
+
+            "cell",
+            "cell number",
+
+            "landline",
+
+            "fax",
+            "fax number",
+
+            "whatsapp number",
+
+            "emergency phone",
+            "emergency contact number",
+
+            "nominee phone"
+        ],
+
+
+        /* =====================================================
+           ADDRESS
+           ===================================================== */
+
+        address: [
+
+            "address",
+
+            "home address",
+            "residential address",
+            "permanent address",
+            "current address",
+            "temporary address",
+
+            "mailing address",
+            "postal address",
+
+            "billing address",
+            "shipping address",
+
+            "office address",
+            "work address",
+
+            "registered address",
+            "delivery address",
+
+            "residential"
+        ],
+
+
+        house: [
+
+            "house number",
+            "house no",
+
+            "door number",
+            "door no",
+
+            "flat number",
+            "flat no",
+
+            "apartment",
+            "apartment number",
+
+            "unit number",
+            "unit no",
+
+            "building number",
+            "building no",
+
+            "plot number",
+            "plot no"
+        ],
+
+
+        street: [
+
+            "street",
+            "street name",
+
+            "road",
+            "road name",
+
+            "lane",
+            "lane name",
+
+            "avenue",
+            "avenue name",
+
+            "boulevard",
+
+            "highway"
+        ],
+
+
+        locality: [
+
+            "locality",
+            "neighborhood",
+            "neighbourhood",
+
+            "area",
+
+            "district",
+
+            "town",
+            "town name",
+
+            "village",
+
+            "suburb",
+
+            "municipality",
+
+            "layout"
+        ],
+
+
+        city: [
+
+            "city",
+            "city name",
+
+            "residence city",
+
+            "birth city",
+
+            "hometown"
+        ],
+
+
+        state: [
+
+            "state",
+            "state name",
+
+            "province",
+            "province name",
+
+            "region"
+        ],
+
+
+        country: [
+
+            "country",
+            "country name",
+
+            "residence country",
+
+            "birth country"
+        ],
+
+
+        postal: [
+
+            "zip",
+            "zip code",
+            "zipcode",
+
+            "postal code",
+            "postcode",
+            "post code",
+
+            "pin code",
+            "pincode"
+        ],
+
+
+        landmark: [
+
+            "landmark",
+
+            "nearby landmark",
+
+            "directions",
+
+            "location details"
+        ],
+
+
+        /* =====================================================
+           DATE / DEMOGRAPHICS
+           ===================================================== */
+
+        date: [
+
+            "date",
+
+            "dob",
+
+            "date of birth",
+
+            "birth date",
+
+            "birthdate",
+
+            "born on",
+
+            "birthday",
+
+            "date of joining",
+
+            "joining date",
+
+            "admission date",
+
+            "registration date",
+
+            "issue date",
+
+            "expiry date",
+
+            "expiration date",
+
+            "start date",
+
+            "end date",
+
+            "appointment date"
+        ],
+
+
+        dob: [
+
+            "dob",
+
+            "date of birth",
+
+            "birth date",
+
+            "birthdate",
+
+            "born on",
+
+            "birthday"
+        ],
+
+
+        age: [
+
+            "age",
+            "age range"
+        ],
+
+
+        gender: [
+
+            "gender",
+
+            "sex",
+
+            "gender identity",
+
+            "gender expression"
+        ],
+
+
+        nationality: [
+
+            "nationality",
+
+            "citizenship",
+
+            "citizenship status",
+
+            "residency status",
+
+            "resident status",
+
+            "immigration status",
+
+            "visa status"
+        ],
+
+
+        marital: [
+
+            "marital status",
+
+            "marriage status",
+
+            "relationship status",
+
+            "spouse",
+
+            "partner"
+        ],
+
+
+        /* =====================================================
+           GOVERNMENT IDS
+           ===================================================== */
+
+        aadhaar: [
+
+            "aadhaar",
+
+            "aadhar",
+
+            "aadhaar number",
+
+            "aadhar number",
+
+            "uid",
+
+            "uidai"
+        ],
+
+
+        pan: [
+
+            "pan",
+
+            "pan number",
+
+            "permanent account number"
+        ],
+
+
+        voter: [
+
+            "voter id",
+
+            "voter id number",
+
+            "voter number",
+
+            "epic",
+
+            "epic number"
+        ],
+
+
+        passport: [
+
+            "passport",
+
+            "passport number",
+
+            "passport no"
+        ],
+
+
+        driving_license: [
+
+            "driving license",
+
+            "driving licence",
+
+            "driver license",
+
+            "driver's license",
+
+            "dl number",
+
+            "license number",
+
+            "licence number"
+        ],
+
+
+        government_id: [
+
+            "government id",
+
+            "government identification",
+
+            "national id",
+
+            "national identification",
+
+            "identity number",
+
+            "identification number",
+
+            "id number"
+        ],
+
+
+        tax: [
+
+            "tax id",
+
+            "tax number",
+
+            "tax identification",
+
+            "tax identification number",
+
+            "tin",
+
+            "gstin",
+
+            "gst number",
+
+            "taxpayer id"
+        ],
+
+
+        social_security: [
+
+            "social security",
+
+            "social security number",
+
+            "ssn"
+        ],
+
+
+        /* =====================================================
+           BANKING
+           ===================================================== */
+
+        bank_account: [
+
+            "account number",
+
+            "account no",
+
+            "bank account",
+
+            "bank account number",
+
+            "savings account",
+
+            "current account",
+
+            "account id",
+
+            "account identifier"
+        ],
+
+
+        ifsc: [
+
+            "ifsc",
+
+            "ifsc code",
+
+            "bank ifsc"
+        ],
+
+
+        micr: [
+
+            "micr",
+
+            "micr code",
+
+            "micr number"
+        ],
+
+
+        iban: [
+
+            "iban",
+
+            "international bank account number"
+        ],
+
+
+        swift: [
+
+            "swift",
+
+            "swift code",
+
+            "bic",
+
+            "bic code"
+        ],
+
+
+        routing: [
+
+            "routing number",
+
+            "routing code",
+
+            "sort code",
+
+            "bank routing"
+        ],
+
+
+        branch: [
+
+            "branch",
+
+            "branch name",
+
+            "bank branch",
+
+            "branch address",
+
+            "home branch"
+        ],
+
+
+        upi: [
+
+            "upi",
+
+            "upi id",
+
+            "upi identifier",
+
+            "upi address",
+
+            "vpa",
+
+            "virtual payment address"
+        ],
+
+
+        /* =====================================================
+           PAYMENT CARD
+           ===================================================== */
+
+        card_number: [
+
+            "card number",
+
+            "credit card",
+
+            "credit card number",
+
+            "debit card",
+
+            "debit card number",
+
+            "payment card",
+
+            "payment card number"
+        ],
+
+
+        card_holder: [
+
+            "card holder",
+
+            "cardholder",
+
+            "card holder name",
+
+            "name on card"
+        ],
+
+
+        cvv: [
+
+            "cvv",
+
+            "cvv2",
+
+            "cvc",
+
+            "security code",
+
+            "card security code"
+        ],
+
+
+        expiry: [
+
+            "expiry",
+
+            "expiration",
+
+            "expiry date",
+
+            "expiration date",
+
+            "valid thru",
+
+            "valid through",
+
+            "expires",
+
+            "expiration month",
+
+            "expiration year"
+        ],
+
+
+        card_type: [
+
+            "card type",
+
+            "payment type"
+        ],
+
+
+        /* =====================================================
+           FINANCIAL
+           ===================================================== */
+
+        financial: [
+
+            "balance",
+
+            "bank balance",
+
+            "account balance",
+
+            "available balance",
+
+            "current balance",
+
+            "credit limit",
+
+            "available credit",
+
+            "statement due",
+
+            "minimum due",
+
+            "amount due",
+
+            "outstanding amount",
+
+            "transaction amount",
+
+            "transaction value",
+
+            "salary",
+
+            "annual salary",
+
+            "monthly salary",
+
+            "income",
+
+            "annual income",
+
+            "monthly income",
+
+            "gross income",
+
+            "net income",
+
+            "compensation",
+
+            "pay",
+
+            "net worth",
+
+            "assets",
+
+            "liabilities",
+
+            "investment",
+
+            "investments",
+
+            "portfolio",
+
+            "loan",
+
+            "loan number",
+
+            "mortgage",
+
+            "mortgage number",
+
+            "credit score",
+
+            "credit history",
+
+            "payment amount",
+
+            "purchase amount"
+        ],
+
+
+        /* =====================================================
+           AUTHENTICATION
+           ===================================================== */
+
+        password: [
+
+            "password",
+
+            "passwd",
+
+            "passcode",
+
+            "login password",
+
+            "account password"
+        ],
+
+
+        otp: [
+
+            "otp",
+
+            "one time password",
+
+            "one-time password",
+
+            "verification code",
+
+            "authentication code",
+
+            "verification otp"
+        ],
+
+
+        pin: [
+
+            "pin",
+
+            "pin number",
+
+            "personal identification number",
+
+            "atm pin",
+
+            "card pin",
+
+            "debit pin"
+        ],
+
+
+        secret: [
+
+            "secret",
+
+            "secret answer",
+
+            "security answer",
+
+            "recovery code",
+
+            "backup code"
+        ],
+
+
+        /* =====================================================
+           DIGITAL IDENTIFIERS
+           ===================================================== */
+
+        api_key: [
+
+            "api key",
+
+            "apikey",
+
+            "api token",
+
+            "access token",
+
+            "auth token",
+
+            "authentication token",
+
+            "bearer token",
+
+            "refresh token",
+
+            "secret key",
+
+            "private key",
+
+            "client secret"
+        ],
+
+
+        session: [
+
+            "session id",
+
+            "session token",
+
+            "session identifier",
+
+            "cookie",
+
+            "cookie value"
+        ],
+
+
+        device: [
+
+            "device id",
+
+            "device identifier",
+
+            "device number",
+
+            "imei",
+
+            "imei number",
+
+            "serial number",
+
+            "serial",
+
+            "mac address",
+
+            "bluetooth address"
+        ],
+
+
+        ip: [
+
+            "ip",
+
+            "ip address",
+
+            "ipv4",
+
+            "ipv6",
+
+            "public ip",
+
+            "private ip"
+        ],
+
+
+        fingerprint: [
+
+            "fingerprint",
+
+            "browser fingerprint",
+
+            "device fingerprint",
+
+            "biometric fingerprint"
+        ],
+
+
+        /* =====================================================
+           EMPLOYMENT
+           ===================================================== */
+
+        employment: [
+
+            "employee id",
+
+            "employee number",
+
+            "employee code",
+
+            "staff id",
+
+            "staff number",
+
+            "worker id",
+
+            "job title",
+
+            "designation",
+
+            "department",
+
+            "employer",
+
+            "company name",
+
+            "organization",
+
+            "office",
+
+            "workplace"
+        ],
+
+
+        employment_details: [
+
+            "joining date",
+
+            "hire date",
+
+            "employment date",
+
+            "termination date",
+
+            "employee status",
+
+            "employment status",
+
+            "work location",
+
+            "manager",
+
+            "manager name",
+
+            "supervisor",
+
+            "supervisor name"
+        ],
+
+
+        /* =====================================================
+           EDUCATION
+           ===================================================== */
+
+        education: [
+
+            "student id",
+
+            "student number",
+
+            "student code",
+
+            "roll number",
+
+            "roll no",
+
+            "registration number",
+
+            "registration no",
+
+            "university id",
+
+            "college id",
+
+            "admission number",
+
+            "enrollment number",
+
+            "enrolment number",
+
+            "candidate id"
+        ],
+
+
+        academic: [
+
+            "gpa",
+
+            "cgpa",
+
+            "grade",
+
+            "marks",
+
+            "score",
+
+            "percentage",
+
+            "rank",
+
+            "academic record",
+
+            "transcript",
+
+            "academic history"
+        ],
+
+
+        /* =====================================================
+           MEDICAL
+           ===================================================== */
+
+        medical: [
+
+            "medical record",
+
+            "medical record number",
+
+            "patient id",
+
+            "patient number",
+
+            "patient name",
+
+            "hospital id",
+
+            "hospital number",
+
+            "health id",
+
+            "health record",
+
+            "medical history",
+
+            "diagnosis",
+
+            "condition",
+
+            "disease",
+
+            "illness",
+
+            "treatment",
+
+            "medication",
+
+            "prescription",
+
+            "doctor name",
+
+            "physician name"
+        ],
+
+
+        blood: [
+
+            "blood group",
+
+            "blood type",
+
+            "rh factor"
+        ],
+
+
+        insurance: [
+
+            "insurance number",
+
+            "insurance id",
+
+            "policy number",
+
+            "policy id",
+
+            "claim number",
+
+            "claim id"
+        ],
+
+
+        /* =====================================================
+           FAMILY
+           ===================================================== */
+
+        family: [
+
+            "father name",
+
+            "father's name",
+
+            "fathers name",
+
+            "father full name",
+
+            "father fullname",
+
+            "mother name",
+
+            "mother's name",
+
+            "mothers name",
+
+            "mother full name",
+
+            "mother fullname",
+
+            "parent name",
+
+            "parent's name",
+
+            "parents name",
+
+            "guardian name",
+
+            "guardian's name",
+
+            "spouse name",
+
+            "partner name",
+
+            "child name",
+
+            "son name",
+
+            "daughter name",
+
+            "brother name",
+
+            "sister name",
+
+            "nominee",
+
+            "nominee name",
+
+            "nominee phone",
+
+            "emergency contact",
+
+            "emergency contact name"
+        ],
+
+
+        /* =====================================================
+           TRAVEL
+           ===================================================== */
+
+        travel: [
+
+            "passport",
+
+            "visa",
+
+            "visa number",
+
+            "flight number",
+
+            "booking number",
+
+            "booking id",
+
+            "reservation number",
+
+            "reservation id",
+
+            "ticket number",
+
+            "ticket id",
+
+            "pnr",
+
+            "pnr number",
+
+            "train number",
+
+            "bus number",
+
+            "hotel booking",
+
+            "travel history"
+        ],
+
+
+        /* =====================================================
+           VEHICLE
+           ===================================================== */
+
+        vehicle: [
+
+            "vehicle number",
+
+            "vehicle registration",
+
+            "registration plate",
+
+            "license plate",
+
+            "licence plate",
+
+            "number plate",
+
+            "vin",
+
+            "vin number",
+
+            "vehicle identification number",
+
+            "chassis number",
+
+            "engine number"
+        ],
+
+
+        /* =====================================================
+           LOCATION
+           ===================================================== */
+
+        location: [
+
+            "gps",
+
+            "gps location",
+
+            "latitude",
+
+            "longitude",
+
+            "coordinates",
+
+            "geolocation",
+
+            "location",
+
+            "current location",
+
+            "home location",
+
+            "work location",
+
+            "location history"
+        ],
+
+
+        /* =====================================================
+           SOCIAL
+           ===================================================== */
+
+        social: [
+
+            "facebook id",
+
+            "instagram id",
+
+            "twitter id",
+
+            "twitter username",
+
+            "x username",
+
+            "linkedin id",
+
+            "linkedin profile",
+
+            "github username",
+
+            "social media",
+
+            "social media handle",
+
+            "social handle"
+        ],
+
+
+        /* =====================================================
+           ONLINE ACTIVITY
+           ===================================================== */
+
+        online_activity: [
+
+            "search history",
+
+            "browsing history",
+
+            "browser history",
+
+            "website history",
+
+            "click history",
+
+            "activity history",
+
+            "login history",
+
+            "ip history"
+        ],
+
+
+        /* =====================================================
+           PURCHASE
+           ===================================================== */
+
+        purchases: [
+
+            "purchase history",
+
+            "order history",
+
+            "order number",
+
+            "order id",
+
+            "invoice number",
+
+            "invoice id",
+
+            "receipt number",
+
+            "receipt id"
+        ]
+    };
+
+
+    /* =========================================================
+       REGEX PATTERNS
+       ========================================================= */
+
+    const PATTERNS = [
+
+        /* EMAIL */
+
         {
-          redactTextNodes: true,
-          redactInputs: true,
-          targetAttributes: [
-            "placeholder",
-            "aria-label",
-            "title",
-            "alt",
-            "href",
-          ],
+            type:
+                "EMAIL",
+
+            regex:
+                /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
         },
-        options,
-      );
-    }
 
-    /**
-     * Main entry point to sanitize DOM.
-     * Accepts HTML string, File, Blob, or DOM Document/Element.
-     * @param {string|File|Blob|Document|Element} input
-     * @returns {Promise<{doc: Document, html: string, stats: object}>}
-     */
-    async sanitize(input) {
-      let doc;
-      const stats = {
-        password: 0,
-        aadhaar: 0,
-        indianPassport: 0,
-        ifsc: 0,
-        pan: 0,
-        vehicleRegistration: 0,
-        email: 0,
-        phone: 0,
-        creditCard: 0,
-        username: 0,
-        ssn: 0,
-        jwt: 0,
-        bearer: 0,
-        apiKey: 0,
-        total: 0,
-      };
 
-      if (typeof input === "string") {
-        const parser = new DOMParser();
-        doc = parser.parseFromString(input, "text/html");
-      } else if (input instanceof File || input instanceof Blob) {
-        const text = await input.text();
-        const parser = new DOMParser();
-        doc = parser.parseFromString(text, "text/html");
-      } else if (input && input.nodeType === Node.DOCUMENT_NODE) {
-        doc = input.cloneNode(true);
-      } else if (input && input.nodeType === Node.ELEMENT_NODE) {
-        const parser = new DOMParser();
-        doc = parser.parseFromString(input.outerHTML, "text/html");
-      } else {
-        throw new Error("Invalid DOM input provided to DOMRedactor.");
-      }
+        /* INDIA PHONE */
 
-      // Traverse and sanitize DOM tree
-      this.traverseAndSanitize(doc.documentElement || doc.body, stats);
+        {
+            type:
+                "PHONE",
 
-      // Compute total redactions
-      stats.total = Object.keys(stats)
-        .filter((k) => k !== "total")
-        .reduce((acc, curr) => acc + stats[curr], 0);
+            regex:
+                /(?<!\d)(?:\+91[\s-]?)?[6-9]\d{9}(?!\d)/g
+        },
 
-      // Serialize document back to HTML string
-      let html = doc.doctype
-        ? `<!DOCTYPE ${doc.doctype.name}` +
-          (doc.doctype.publicId ? ` PUBLIC "${doc.doctype.publicId}"` : "") +
-          (!doc.doctype.publicId && doc.doctype.systemId ? " SYSTEM" : "") +
-          (doc.doctype.systemId ? ` "${doc.doctype.systemId}"` : "") +
-          `>\n` +
-          doc.documentElement.outerHTML
-        : doc.documentElement.outerHTML;
 
-      return { doc, html, stats };
-    }
+        /* AADHAAR */
 
-    /**
-     * Recursively traverses DOM nodes and sanitizes targeted elements and attributes.
-     * Preserves data-* attributes, tag types, and node hierarchy completely intact.
-     * @param {Node} node
-     * @param {object} stats
-     */
-    traverseAndSanitize(node, stats) {
-      if (!node) return;
+        {
+            type:
+                "AADHAAR",
 
-      // 1. Text Node Handling
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (this.options.redactTextNodes && node.nodeValue) {
-          node.nodeValue = redactString(node.nodeValue, stats);
+            regex:
+                /(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)/g
+        },
+
+
+        /* PAN */
+
+        {
+            type:
+                "PAN",
+
+            regex:
+                /\b[A-Z]{5}\d{4}[A-Z]\b/gi
+        },
+
+
+        /* IFSC */
+
+        {
+            type:
+                "IFSC",
+
+            regex:
+                /\b[A-Z]{4}0[A-Z0-9]{6}\b/gi
+        },
+
+
+        /* IBAN */
+
+        {
+            type:
+                "IBAN",
+
+            regex:
+                /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/gi
+        },
+
+
+        /* SSN */
+
+        {
+            type:
+                "SSN",
+
+            regex:
+                /\b\d{3}-\d{2}-\d{4}\b/g
+        },
+
+
+        /* VIN */
+
+        {
+            type:
+                "VIN",
+
+            regex:
+                /\b[A-HJ-NPR-Z0-9]{17}\b/gi
+        },
+
+
+        /* IMEI */
+
+        {
+            type:
+                "IMEI",
+
+            regex:
+                /\b\d{15}\b/g
+        },
+
+
+        /* IPV4 */
+
+        {
+            type:
+                "IP",
+
+            regex:
+                /\b(?:\d{1,3}\.){3}\d{1,3}\b/g
+        },
+
+
+        /* IPV6 */
+
+        {
+            type:
+                "IPV6",
+
+            regex:
+                /\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b/gi
+        },
+
+
+        /* MAC */
+
+        {
+            type:
+                "MAC",
+
+            regex:
+                /\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/gi
+        },
+
+
+        /* JWT */
+
+        {
+            type:
+                "JWT",
+
+            regex:
+                /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
+        },
+
+
+        /* BEARER TOKEN */
+
+        {
+            type:
+                "BEARER_TOKEN",
+
+            regex:
+                /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi
+        },
+
+
+        /* API KEY */
+
+        {
+            type:
+                "API_KEY",
+
+            regex:
+                /\b(?:sk|pk|api|key|token)[-_][A-Za-z0-9_-]{12,}\b/gi
+        },
+
+
+        /* AWS */
+
+        {
+            type:
+                "AWS_KEY",
+
+            regex:
+                /\bAKIA[0-9A-Z]{16}\b/g
+        },
+
+
+        /* UUID */
+
+        {
+            type:
+                "UUID",
+
+            regex:
+                /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi
+        },
+
+
+        /*
+           DATE
+
+           Examples:
+
+           17/09/2003
+           17-09-2003
+           17.09.2003
+
+           2003-09-17
+
+           17 September 2003
+           17 September, 2003
+
+           September 17 2003
+           September 17, 2003
+        */
+
+        {
+            type:
+                "DATE",
+
+            regex:
+                /\b(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\d{4}[\/.-]\d{1,2}[\/.-]\d{1,2}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/gi
+        },
+
+
+        /* COORDINATES */
+
+        {
+            type:
+                "COORDINATES",
+
+            regex:
+                /[-+]?\d{1,3}\.\d{3,}\s*[,;]\s*[-+]?\d{1,3}\.\d{3,}/g
         }
-        return;
-      }
+    ];
 
-      // 2. Element Node Handling
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const tagName = node.tagName.toLowerCase();
 
-        // Check for Input or Textarea elements
-        if (tagName === "input" || tagName === "textarea") {
-          const type = (node.getAttribute("type") || "text").toLowerCase();
+    /* =========================================================
+       SENSITIVE DATA ATTRIBUTES
+       ========================================================= */
 
-          // Passwords
-          if (type === "password") {
-            if (node.hasAttribute("value")) {
-              node.setAttribute("value", "[REDACTED]");
-              stats.password++;
-            }
-            node.value = "[REDACTED]";
-          } else {
-            // Check if field name, id, or placeholder indicates API Key, Token, Password, Username, or Account Holder Name
-            const nameAttr = (node.getAttribute("name") || "").toLowerCase();
-            const idAttr = (node.getAttribute("id") || "").toLowerCase();
-            const placeholderAttr = (
-              node.getAttribute("placeholder") || ""
-            ).toLowerCase();
-            const autocompleteAttr = (
-              node.getAttribute("autocomplete") || ""
-            ).toLowerCase();
+    const SENSITIVE_ATTRIBUTES =
+        new Set([
 
-            const isSecretField =
-              nameAttr.includes("password") ||
-              idAttr.includes("password") ||
-              autocompleteAttr.includes("password");
-            const isApiKeyField =
-              nameAttr.includes("api") ||
-              idAttr.includes("api") ||
-              nameAttr.includes("key") ||
-              idAttr.includes("key") ||
-              nameAttr.includes("token") ||
-              idAttr.includes("token") ||
-              nameAttr.includes("secret") ||
-              idAttr.includes("secret");
-            const isUsernameField =
-              nameAttr.includes("username") ||
-              idAttr.includes("username") ||
-              nameAttr.includes("user_name") ||
-              idAttr.includes("name") ||
-              idAttr.includes("holder") ||
-              nameAttr.includes("holder") ||
-              nameAttr.includes("owner") ||
-              idAttr.includes("owner");
+            "data-name",
+            "data-full-name",
+            "data-first-name",
+            "data-last-name",
 
-            if (isSecretField) {
-              if (node.hasAttribute("value")) {
-                node.setAttribute("value", "[REDACTED]");
-                stats.password++;
-              }
-              node.value = "[REDACTED]";
-            } else if (isApiKeyField) {
-              if (node.hasAttribute("value") && node.getAttribute("value")) {
-                node.setAttribute("value", "[REDACTED]");
-                stats.apiKey++;
-              }
-              node.value = "[REDACTED]";
-            } else if (isUsernameField) {
-              if (node.hasAttribute("value") && node.getAttribute("value")) {
-                node.setAttribute("value", "[REDACTED]");
-                stats.username++;
-              }
-              node.value = "[REDACTED]";
-            } else {
-              // CHANGE:
-              // Sanitize the LIVE DOM property's current value as well as
-              // the HTML `value` attribute.
-              //
-              // This handles inputs whose value was populated dynamically
-              // by JavaScript and therefore has no `value` attribute.
+            "data-father-name",
+            "data-mother-name",
+            "data-parent-name",
 
-              const currentValue = node.value;
+            "data-email",
+            "data-phone",
+            "data-mobile",
 
-              if (currentValue) {
-                const redactedValue = redactString(currentValue, stats);
+            "data-address",
+            "data-street",
+            "data-city",
+            "data-state",
+            "data-country",
 
-                // Update the cloned input's actual value property.
-                node.value = redactedValue;
+            "data-pincode",
+            "data-postal-code",
 
-                // Also update the cloned HTML attribute if it exists.
-                if (node.hasAttribute("value")) {
-                  node.setAttribute("value", redactedValue);
+            "data-date",
+            "data-dob",
+            "data-birth-date",
+
+            "data-aadhaar",
+            "data-aadhar",
+
+            "data-pan",
+
+            "data-passport",
+
+            "data-voter-id",
+
+            "data-driving-license",
+            "data-driving-licence",
+
+            "data-account-number",
+            "data-bank-account",
+
+            "data-ifsc",
+            "data-iban",
+            "data-swift",
+            "data-upi",
+
+            "data-card-number",
+            "data-card-holder",
+
+            "data-cvv",
+            "data-expiry",
+
+            "data-password",
+            "data-pin",
+            "data-otp",
+
+            "data-api-key",
+            "data-token",
+            "data-secret",
+
+            "data-session-id",
+
+            "data-ip",
+            "data-imei",
+
+            "data-device-id",
+            "data-serial-number",
+
+            "data-employee-id",
+            "data-student-id",
+            "data-roll-number",
+
+            "data-patient-id",
+            "data-medical-record",
+
+            "data-vehicle-number",
+            "data-vin",
+
+            "data-latitude",
+            "data-longitude",
+
+            "data-location",
+
+            "data-nominee"
+        ]);
+
+
+    /* =========================================================
+       PROTECTED ELEMENTS
+       ========================================================= */
+
+    const PROTECTED_SELECTOR =
+        "h1,h2,h3,h4,h5,h6,header,legend";
+
+
+    const EXECUTABLE_SELECTOR =
+        "script,style,noscript,template";
+
+
+    const LABEL_SELECTOR =
+        "label,.label,.field-label,.form-label,.input-label,.field-name,.field-title";
+
+
+    /* =========================================================
+       BASIC HELPERS
+       ========================================================= */
+
+    function normalize(
+        value
+    ) {
+
+        return String(
+            value == null
+                ? ""
+                : value
+        )
+            .toLowerCase()
+            .replace(
+                /[_-]+/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+    }
+
+
+    function optionsFor(
+        stats
+    ) {
+
+        return (
+            stats &&
+            stats.options
+        ) || CONFIG;
+    }
+
+
+    function replacement(
+        stats
+    ) {
+
+        return optionsFor(
+            stats
+        ).replacement;
+    }
+
+
+    function increment(
+        stats,
+        type
+    ) {
+
+        stats.total++;
+
+
+        if (
+            !stats.byType[type]
+        ) {
+
+            stats.byType[type] =
+                0;
+        }
+
+
+        stats.byType[type]++;
+    }
+
+
+    /* =========================================================
+       PROTECTION
+       ========================================================= */
+
+    function isProtectedElement(
+        element
+    ) {
+
+        if (
+            !element ||
+            element.nodeType !== 1
+        ) {
+
+            return false;
+        }
+
+
+        if (
+            !element.closest
+        ) {
+
+            return false;
+        }
+
+
+        return !!element.closest(
+            PROTECTED_SELECTOR
+        );
+    }
+
+
+    function isProtectedTextNode(
+        node
+    ) {
+
+        if (!node) {
+            return false;
+        }
+
+
+        const parent =
+            node.parentElement;
+
+
+        if (!parent) {
+            return false;
+        }
+
+
+        return isProtectedElement(
+            parent
+        );
+    }
+
+
+    function isExecutableElement(
+        element
+    ) {
+
+        if (
+            !element ||
+            !element.matches
+        ) {
+
+            return false;
+        }
+
+
+        return element.matches(
+            EXECUTABLE_SELECTOR
+        );
+    }
+
+
+    function isInsideLabelElement(
+        element
+    ) {
+
+        if (
+            !element ||
+            !element.closest
+        ) {
+
+            return false;
+        }
+
+
+        return !!element.closest(
+            LABEL_SELECTOR
+        );
+    }
+
+
+    /* =========================================================
+       PII LABEL DETECTION
+       ========================================================= */
+
+    function findPIILabel(
+        text
+    ) {
+
+        const normalized =
+            normalize(text);
+
+
+        if (!normalized) {
+            return null;
+        }
+
+
+        /*
+           Exact match first.
+        */
+
+        for (
+            const category
+            of Object.keys(
+                PII_LABELS
+            )
+        ) {
+
+            for (
+                const label
+                of PII_LABELS[
+                    category
+                ]
+            ) {
+
+                if (
+                    normalized ===
+                    normalize(label)
+                ) {
+
+                    return {
+
+                        category:
+                            category.toUpperCase(),
+
+                        label:
+                            label
+                    };
                 }
-              } else if (node.hasAttribute("value")) {
-                // Handle a static HTML value attribute.
-                const originalVal = node.getAttribute("value");
-                const redactedVal = redactString(originalVal, stats);
-
-                node.setAttribute("value", redactedVal);
-                node.value = redactedVal;
-              }
             }
-          }
         }
 
-        // Targeted Attributes Sanitization
-        // Note: data-* attributes are NOT in targetAttributes, preserving mapping integrity!
-        this.options.targetAttributes.forEach((attrName) => {
-          if (node.hasAttribute(attrName)) {
-            const originalVal = node.getAttribute(attrName);
-            if (attrName === "href") {
-              node.setAttribute(attrName, redactHref(originalVal, stats));
-            } else {
-              node.setAttribute(attrName, redactString(originalVal, stats));
-            }
-          }
-        });
 
-        // Traverse child nodes
-        const children = Array.from(node.childNodes);
-        for (let i = 0; i < children.length; i++) {
-          this.traverseAndSanitize(children[i], stats);
+        /*
+           Partial match.
+        */
+
+        for (
+            const category
+            of Object.keys(
+                PII_LABELS
+            )
+        ) {
+
+            for (
+                const label
+                of PII_LABELS[
+                    category
+                ]
+            ) {
+
+                const normalizedLabel =
+                    normalize(label);
+
+
+                if (
+                    normalizedLabel.length >= 4 &&
+
+                    normalized.includes(
+                        normalizedLabel
+                    )
+                ) {
+
+                    return {
+
+                        category:
+                            category.toUpperCase(),
+
+                        label:
+                            label
+                    };
+                }
+            }
         }
-      }
+
+
+        return null;
     }
 
-    /**
-     * In-place redaction on the live DOM tree.
-     * Records all modifications in an undoList and tracks PII stats.
-     * Skips extension overlay elements and script/style tags.
-     * @param {Node} rootNode
-     * @returns {{undoList: Array<object>, stats: object}}
-     */
-    redactLiveDOM(rootNode = (document.body || document.documentElement)) {
-      const stats = {
-        password: 0,
-        aadhaar: 0,
-        indianPassport: 0,
-        ifsc: 0,
-        pan: 0,
-        vehicleRegistration: 0,
-        email: 0,
-        phone: 0,
-        creditCard: 0,
-        username: 0,
-        ssn: 0,
-        jwt: 0,
-        bearer: 0,
-        apiKey: 0,
-        total: 0,
-      };
-      const undoList = [];
 
-      const traverse = (node) => {
-        if (!node) return;
+    /* =========================================================
+       LABEL ELEMENT DETECTION
+       ========================================================= */
 
-        // Skip script, style, and PrivSight extension UI elements
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          const tag = node.tagName.toLowerCase();
-          if (tag === "script" || tag === "style") return;
-          if (
-            node.id === "privsight-overlay" ||
-            node.id === "privsight-hint-container" ||
-            (typeof node.classList?.contains === "function" &&
-              (node.classList.contains("privsight-shell") ||
-               node.classList.contains("llm-hint-badge")))
-          ) {
+    function isPIILabelElement(
+        element
+    ) {
+
+        if (!element) {
+            return false;
+        }
+
+
+        /*
+           Headings are NEVER labels.
+        */
+
+        if (
+            isProtectedElement(
+                element
+            )
+        ) {
+
+            return false;
+        }
+
+
+        /*
+           Form controls are values.
+        */
+
+        if (
+            element.matches &&
+
+            element.matches(
+                "input,textarea,select,option,button"
+            )
+        ) {
+
+            return false;
+        }
+
+
+        const text =
+            String(
+                element.textContent ||
+                ""
+            )
+                .replace(
+                    /\s+/g,
+                    " "
+                )
+                .trim();
+
+
+        if (
+            !text ||
+            text.length > 100
+        ) {
+
+            return false;
+        }
+
+
+        /*
+           Exact label match only.
+        */
+
+        let exactMatch =
+            false;
+
+
+        for (
+            const category
+            of Object.keys(
+                PII_LABELS
+            )
+        ) {
+
+            for (
+                const label
+                of PII_LABELS[
+                    category
+                ]
+            ) {
+
+                if (
+                    normalize(label) ===
+                    normalize(text)
+                ) {
+
+                    exactMatch =
+                        true;
+
+                    break;
+                }
+            }
+
+
+            if (exactMatch) {
+                break;
+            }
+        }
+
+
+        if (!exactMatch) {
+            return false;
+        }
+
+
+        /*
+           HTML label.
+        */
+
+        if (
+            element.tagName &&
+
+            element.tagName.toLowerCase() ===
+                "label"
+        ) {
+
+            return true;
+        }
+
+
+        /*
+           Label classes.
+        */
+
+        const className =
+            typeof element.className ===
+                "string"
+                ? normalize(
+                    element.className
+                )
+                : "";
+
+
+        if (
+            /(^|\s)(label|field-label|form-label|input-label|field-name|field-title)(\s|$)/i
+                .test(
+                    className
+                )
+        ) {
+
+            return true;
+        }
+
+
+        /*
+           Semantic label attributes.
+        */
+
+        if (
+            element.hasAttribute(
+                "data-label"
+            ) ||
+
+            element.hasAttribute(
+                "data-field"
+            )
+        ) {
+
+            return true;
+        }
+
+
+        /*
+           Leaf element.
+        */
+
+        if (
+            element.children &&
+
+            element.children.length === 0
+        ) {
+
+            return true;
+        }
+
+
+        return false;
+    }
+
+
+    /* =========================================================
+       CONTEXT
+       ========================================================= */
+
+    function getContext(
+        element
+    ) {
+
+        if (!element) {
+            return "";
+        }
+
+
+        const parts = [
+
+            element.tagName ||
+                "",
+
+            element.id ||
+                "",
+
+            typeof element.className ===
+                "string"
+                ? element.className
+                : ""
+        ];
+
+
+        /*
+           PLACEHOLDER IS DELIBERATELY EXCLUDED.
+        */
+
+        const attributes = [
+
+            "name",
+
+            "aria-label",
+
+            "title",
+
+            "data-label",
+
+            "data-field",
+
+            "data-name"
+        ];
+
+
+        for (
+            const attribute
+            of attributes
+        ) {
+
+            const value =
+                element.getAttribute(
+                    attribute
+                );
+
+
+            if (value) {
+
+                parts.push(
+                    value
+                );
+            }
+        }
+
+
+        return normalize(
+            parts.join(" ")
+        );
+    }
+
+
+    /* =========================================================
+       LUHN
+       ========================================================= */
+
+    function passesLuhn(
+        value
+    ) {
+
+        const digits =
+            String(value)
+                .replace(
+                    /\D/g,
+                    ""
+                );
+
+
+        if (
+            digits.length < 13 ||
+            digits.length > 19
+        ) {
+
+            return false;
+        }
+
+
+        let sum =
+            0;
+
+
+        let alternate =
+            false;
+
+
+        for (
+            let i =
+                digits.length - 1;
+
+            i >= 0;
+
+            i--
+        ) {
+
+            let number =
+                Number(
+                    digits[i]
+                );
+
+
+            if (alternate) {
+
+                number *= 2;
+
+
+                if (
+                    number > 9
+                ) {
+
+                    number -= 9;
+                }
+            }
+
+
+            sum +=
+                number;
+
+
+            alternate =
+                !alternate;
+        }
+
+
+        return (
+            sum % 10 === 0
+        );
+    }
+
+
+    /* =========================================================
+       CARD REDACTION
+       ========================================================= */
+
+    function redactCards(
+        text,
+        stats
+    ) {
+
+        return text.replace(
+
+            /\b(?:\d[ -]?){13,19}\b/g,
+
+            function (match) {
+
+                if (
+                    !passesLuhn(
+                        match
+                    )
+                ) {
+
+                    return match;
+                }
+
+
+                increment(
+                    stats,
+                    "CARD"
+                );
+
+
+                return replacement(stats);
+            }
+        );
+    }
+
+
+    /* =========================================================
+       PATTERN REDACTION
+       ========================================================= */
+
+    function redactPatterns(
+        text,
+        stats
+    ) {
+
+        let result =
+            text;
+
+
+        for (
+            const pattern
+            of PATTERNS
+        ) {
+
+            pattern.regex.lastIndex =
+                0;
+
+
+            result =
+                result.replace(
+
+                    pattern.regex,
+
+                    function () {
+
+                        increment(
+                            stats,
+                            pattern.type
+                        );
+
+
+                        return replacement(stats);
+                    }
+                );
+        }
+
+
+        return result;
+    }
+
+
+    /* =========================================================
+       NAME HEURISTIC
+       ========================================================= */
+
+    function redactNames(
+        text,
+        context,
+        stats
+    ) {
+
+        if (
+            !optionsFor(
+                stats
+            ).aggressive
+        ) {
+
+            return text;
+        }
+
+
+        const lower =
+            normalize(
+                context
+            );
+
+
+        const indicators = [
+
+            "name",
+
+            "customer",
+
+            "patient",
+
+            "employee",
+
+            "student",
+
+            "applicant",
+
+            "candidate",
+
+            "account holder",
+
+            "beneficiary",
+
+            "recipient",
+
+            "sender",
+
+            "nominee",
+
+            "card holder",
+
+            "cardholder",
+
+            "manager",
+
+            "supervisor",
+
+            "father",
+
+            "mother",
+
+            "parent",
+
+            "guardian"
+        ];
+
+
+        let nameContext =
+            false;
+
+
+        for (
+            const indicator
+            of indicators
+        ) {
+
+            if (
+                lower.includes(
+                    normalize(
+                        indicator
+                    )
+                )
+            ) {
+
+                nameContext =
+                    true;
+
+                break;
+            }
+        }
+
+
+        if (!nameContext) {
+            return text;
+        }
+
+
+        const regex =
+            /\b[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30}){1,3}\b/g;
+
+
+        const ignored =
+            new Set([
+
+                "Full Name",
+
+                "First Name",
+
+                "Last Name",
+
+                "Card Holder",
+
+                "Account Holder",
+
+                "Credit Card",
+
+                "Debit Card",
+
+                "Date Of Birth",
+
+                "Customer Name",
+
+                "Patient Name",
+
+                "Employee Name",
+
+                "Student Name",
+
+                "Father Name",
+
+                "Father's Name",
+
+                "Mother Name",
+
+                "Mother's Name",
+
+                "Parent Name",
+
+                "Guardian Name"
+            ]);
+
+
+        return text.replace(
+
+            regex,
+
+            function (match) {
+
+                if (
+                    ignored.has(
+                        match
+                    )
+                ) {
+
+                    return match;
+                }
+
+
+                increment(
+                    stats,
+                    "NAME"
+                );
+
+
+                return replacement(stats);
+            }
+        );
+    }
+
+
+    /* =========================================================
+       ADDRESS HEURISTIC
+       ========================================================= */
+
+    function redactAddresses(
+        text,
+        context,
+        stats
+    ) {
+
+        const lower =
+            normalize(
+                context
+            );
+
+
+        const indicators = [
+
+            "address",
+
+            "street",
+
+            "road",
+
+            "avenue",
+
+            "lane",
+
+            "house",
+
+            "flat",
+
+            "apartment",
+
+            "building",
+
+            "locality",
+
+            "city",
+
+            "state",
+
+            "postal",
+
+            "pincode",
+
+            "zip"
+        ];
+
+
+        let addressContext =
+            false;
+
+
+        for (
+            const indicator
+            of indicators
+        ) {
+
+            if (
+                lower.includes(
+                    normalize(
+                        indicator
+                    )
+                )
+            ) {
+
+                addressContext =
+                    true;
+
+                break;
+            }
+        }
+
+
+        if (!addressContext) {
+            return text;
+        }
+
+
+        const regex =
+            /\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9 .,'\/-]{2,100}\b/g;
+
+
+        return text.replace(
+
+            regex,
+
+            function (match) {
+
+                if (
+                    !/[A-Za-z]/.test(
+                        match
+                    )
+                ) {
+
+                    return match;
+                }
+
+
+                increment(
+                    stats,
+                    "ADDRESS"
+                );
+
+
+                return replacement(stats);
+            }
+        );
+    }
+
+
+    /* =========================================================
+       NORMAL TEXT SANITIZER
+       ========================================================= */
+
+    function sanitizeText(
+        text,
+        context,
+        stats
+    ) {
+
+        if (
+            !text ||
+            !text.trim()
+        ) {
+
+            return text;
+        }
+
+
+        let result =
+            text;
+
+
+        result =
+            redactPatterns(
+                result,
+                stats
+            );
+
+
+        result =
+            redactCards(
+                result,
+                stats
+            );
+
+
+        result =
+            redactNames(
+                result,
+                context,
+                stats
+            );
+
+
+        result =
+            redactAddresses(
+                result,
+                context,
+                stats
+            );
+
+
+        return result;
+    }
+
+
+    /* =========================================================
+       FIELD CONTAINER
+       ========================================================= */
+
+    function findFieldContainer(
+        labelElement
+    ) {
+
+        if (!labelElement) {
+            return null;
+        }
+
+
+        let current =
+            labelElement.parentElement;
+
+
+        let depth =
+            0;
+
+
+        while (
+            current &&
+            depth < 6
+        ) {
+
+            if (
+                isProtectedElement(
+                    current
+                )
+            ) {
+
+                return null;
+            }
+
+
+            const children =
+                Array.from(
+                    current.children
+                );
+
+
+            if (
+                children.length >= 2 &&
+                children.length <= 8
+            ) {
+
+                const directLabel =
+                    children.indexOf(
+                        labelElement
+                    );
+
+
+                if (
+                    directLabel !== -1
+                ) {
+
+                    return current;
+                }
+
+
+                const nestedLabel =
+                    children.some(
+                        function (child) {
+
+                            return child.contains(
+                                labelElement
+                            );
+                        }
+                    );
+
+
+                if (nestedLabel) {
+
+                    return current;
+                }
+            }
+
+
+            current =
+                current.parentElement;
+
+
+            depth++;
+        }
+
+
+        return null;
+    }
+
+
+    /* =========================================================
+       FIELD VALUE NODES
+       ========================================================= */
+
+    function getFieldValueNodes(
+        container,
+        labelElement
+    ) {
+
+        const result =
+            [];
+
+
+        if (
+            !container ||
+            !labelElement
+        ) {
+
+            return result;
+        }
+
+
+        const labelTextNodes =
+            new Set();
+
+
+        const labelWalker =
+            document.createTreeWalker(
+
+                labelElement,
+
+                NodeFilter.SHOW_TEXT
+            );
+
+
+        let labelNode;
+
+
+        while (
+            (
+                labelNode =
+                    labelWalker.nextNode()
+            )
+        ) {
+
+            labelTextNodes.add(
+                labelNode
+            );
+        }
+
+
+        const descendants =
+            Array.from(
+                container.querySelectorAll("*")
+            );
+
+
+        for (
+            const element
+            of descendants
+        ) {
+
+            /*
+               Never inspect label.
+            */
+
+            if (
+                element ===
+                labelElement
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Never inspect label subtree.
+            */
+
+            if (
+                labelElement.contains(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Never inspect protected elements.
+            */
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Never inspect another label.
+            */
+
+            if (
+                isPIILabelElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Controls and actions are not field-display values.
+            */
+
+            if (
+                element.matches(
+                    "button,a,input,textarea,select,option,[role='button']"
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Only leaf elements.
+            */
+
+            if (
+                element.children.length !==
+                0
+            ) {
+
+                continue;
+            }
+
+
+            const walker =
+                document.createTreeWalker(
+
+                    element,
+
+                    NodeFilter.SHOW_TEXT
+                );
+
+
+            let node;
+
+
+            while (
+                (
+                    node =
+                        walker.nextNode()
+                )
+            ) {
+
+                if (
+                    labelTextNodes.has(
+                        node
+                    )
+                ) {
+
+                    continue;
+                }
+
+
+                if (
+                    isProtectedTextNode(
+                        node
+                    )
+                ) {
+
+                    continue;
+                }
+
+
+                if (
+                    node.nodeValue &&
+                    node.nodeValue.trim()
+                ) {
+
+                    result.push(
+                        node
+                    );
+                }
+            }
+        }
+
+
+        return result;
+    }
+
+
+    /* =========================================================
+       REDACT FIELD VALUE
+       ========================================================= */
+
+    function redactFieldValue(
+        container,
+        labelElement,
+        labelInfo,
+        stats
+    ) {
+
+        if (
+            !container ||
+            !labelElement
+        ) {
+
             return;
-          }
         }
 
-        // 1. Text Node Handling
-        if (node.nodeType === Node.TEXT_NODE) {
-          if (this.options.redactTextNodes && node.nodeValue) {
-            const originalVal = node.nodeValue;
-            const redactedVal = redactString(originalVal, stats);
-            if (redactedVal !== originalVal) {
-              node.nodeValue = redactedVal;
-              undoList.push({ type: "text", node, value: originalVal });
-            }
-          }
-          return;
+
+        if (
+            isProtectedElement(
+                container
+            )
+        ) {
+
+            return;
         }
 
-        // 2. Element Node Handling
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          const tagName = node.tagName.toLowerCase();
 
-          if (tagName === "input" || tagName === "textarea") {
-            const type = (node.getAttribute("type") || "text").toLowerCase();
-            const originalPropValue = node.value;
-            const hadAttr = node.hasAttribute("value");
-            const originalAttrValue = node.getAttribute("value");
-            let changed = false;
+        if (
+            isProtectedElement(
+                labelElement
+            )
+        ) {
 
-            if (type === "password") {
-              if (hadAttr && originalAttrValue !== "[REDACTED]") {
-                node.setAttribute("value", "[REDACTED]");
-                stats.password++;
-                changed = true;
-              }
-              if (originalPropValue !== "[REDACTED]") {
-                node.value = "[REDACTED]";
-                changed = true;
-              }
-            } else {
-              const nameAttr = (node.getAttribute("name") || "").toLowerCase();
-              const idAttr = (node.getAttribute("id") || "").toLowerCase();
-              const placeholderAttr = (node.getAttribute("placeholder") || "").toLowerCase();
-              const autocompleteAttr = (node.getAttribute("autocomplete") || "").toLowerCase();
-
-              const isSecretField =
-                nameAttr.includes("password") ||
-                idAttr.includes("password") ||
-                autocompleteAttr.includes("password");
-              const isApiKeyField =
-                nameAttr.includes("api") ||
-                idAttr.includes("api") ||
-                nameAttr.includes("key") ||
-                idAttr.includes("key") ||
-                nameAttr.includes("token") ||
-                idAttr.includes("token") ||
-                nameAttr.includes("secret") ||
-                idAttr.includes("secret");
-              const isUsernameField =
-                nameAttr.includes("username") ||
-                idAttr.includes("username") ||
-                nameAttr.includes("user_name") ||
-                idAttr.includes("name") ||
-                idAttr.includes("holder") ||
-                nameAttr.includes("holder") ||
-                nameAttr.includes("owner") ||
-                idAttr.includes("owner");
-
-              if (isSecretField) {
-                if (hadAttr && originalAttrValue !== "[REDACTED]") {
-                  node.setAttribute("value", "[REDACTED]");
-                  stats.password++;
-                  changed = true;
-                }
-                if (originalPropValue !== "[REDACTED]") {
-                  node.value = "[REDACTED]";
-                  changed = true;
-                }
-              } else if (isApiKeyField) {
-                if (hadAttr && originalAttrValue) {
-                  node.setAttribute("value", "[REDACTED]");
-                  stats.apiKey++;
-                  changed = true;
-                }
-                if (originalPropValue) {
-                  node.value = "[REDACTED]";
-                  changed = true;
-                }
-              } else if (isUsernameField) {
-                if (hadAttr && originalAttrValue) {
-                  node.setAttribute("value", "[REDACTED]");
-                  stats.username++;
-                  changed = true;
-                }
-                if (originalPropValue) {
-                  node.value = "[REDACTED]";
-                  changed = true;
-                }
-              } else {
-                if (originalPropValue) {
-                  const redacted = redactString(originalPropValue, stats);
-                  if (redacted !== originalPropValue) {
-                    node.value = redacted;
-                    changed = true;
-                  }
-                }
-                if (hadAttr && originalAttrValue) {
-                  const redactedAttr = redactString(originalAttrValue, stats);
-                  if (redactedAttr !== originalAttrValue) {
-                    node.setAttribute("value", redactedAttr);
-                    changed = true;
-                  }
-                }
-              }
-            }
-
-            if (changed) {
-              undoList.push({
-                type: "input",
-                node,
-                propValue: originalPropValue,
-                hadAttr,
-                attrValue: originalAttrValue,
-              });
-            }
-          }
-
-          // Targeted Attributes Sanitization
-          this.options.targetAttributes.forEach((attrName) => {
-            if (node.hasAttribute(attrName)) {
-              const originalVal = node.getAttribute(attrName);
-              let redactedVal;
-              if (attrName === "href") {
-                redactedVal = redactHref(originalVal, stats);
-              } else {
-                redactedVal = redactString(originalVal, stats);
-              }
-              if (redactedVal !== originalVal) {
-                node.setAttribute(attrName, redactedVal);
-                undoList.push({
-                  type: "attr",
-                  node,
-                  attrName,
-                  value: originalVal,
-                });
-              }
-            }
-          });
-
-          // Traverse child nodes
-          const children = Array.from(node.childNodes);
-          for (let i = 0; i < children.length; i++) {
-            traverse(children[i]);
-          }
+            return;
         }
-      };
 
-      traverse(rootNode);
 
-      stats.total = Object.keys(stats)
-        .filter((k) => k !== "total")
-        .reduce((acc, curr) => acc + stats[curr], 0);
+        const valueNodes =
+            getFieldValueNodes(
+                container,
+                labelElement
+            );
 
-      return { undoList, stats };
+
+        for (
+            const node
+            of valueNodes
+        ) {
+
+            if (
+                isProtectedTextNode(
+                    node
+                )
+            ) {
+
+                continue;
+            }
+
+
+            if (
+                labelElement.contains(
+                    node
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const oldText =
+                node.nodeValue;
+
+
+            const value =
+                oldText.trim();
+
+
+            if (!value) {
+                continue;
+            }
+
+
+            const start =
+                oldText.indexOf(
+                    value
+                );
+
+
+            if (
+                start === -1
+            ) {
+
+                continue;
+            }
+
+
+            node.nodeValue =
+
+                oldText.substring(
+                    0,
+                    start
+                )
+
+                +
+
+                replacement(stats)
+
+                +
+
+                oldText.substring(
+                    start +
+                    value.length
+                );
+
+
+            increment(
+                stats,
+                labelInfo.category
+            );
+        }
     }
 
-    /**
-     * Restores all modified nodes in the live DOM using the undoList in reverse order.
-     * @param {Array<object>} undoList
-     */
-    restoreLiveDOM(undoList) {
-      if (!Array.isArray(undoList)) return;
-      for (let i = undoList.length - 1; i >= 0; i--) {
-        const item = undoList[i];
-        try {
-          if (item.type === "text") {
-            item.node.nodeValue = item.value;
-          } else if (item.type === "input") {
-            item.node.value = item.propValue;
-            if (item.hadAttr) {
-              item.node.setAttribute("value", item.attrValue);
-            } else {
-              item.node.removeAttribute("value");
+
+    /* =========================================================
+       LABELED FIELD SCANNER
+       ========================================================= */
+
+    function sanitizeLabeledFields(
+        doc,
+        stats
+    ) {
+
+        const elements =
+            Array.from(
+                doc.querySelectorAll("*")
+            );
+
+
+        for (
+            const element
+            of elements
+        ) {
+
+            /*
+               Headings never processed.
+            */
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
             }
-          } else if (item.type === "attr") {
-            item.node.setAttribute(item.attrName, item.value);
-          }
-        } catch (err) {
-          console.warn("[PrivSight DOMRedactor] Error restoring DOM node:", err);
+
+
+            /*
+               Scripts etc.
+            */
+
+            if (
+                isExecutableElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const text =
+                String(
+                    element.textContent ||
+                    ""
+                )
+                    .replace(
+                        /\s+/g,
+                        " "
+                    )
+                    .trim();
+
+
+            if (
+                !text ||
+                text.length > 100
+            ) {
+
+                continue;
+            }
+
+
+            const labelInfo =
+                findPIILabel(
+                    text
+                );
+
+
+            if (!labelInfo) {
+                continue;
+            }
+
+
+            if (
+                !isPIILabelElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const container =
+                findFieldContainer(
+                    element
+                );
+
+
+            if (!container) {
+                continue;
+            }
+
+
+            if (
+                isProtectedElement(
+                    container
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const containerText =
+                String(
+                    container.textContent ||
+                    ""
+                )
+                    .trim();
+
+
+            if (
+                containerText.length >
+                700
+            ) {
+
+                continue;
+            }
+
+
+            redactFieldValue(
+                container,
+                element,
+                labelInfo,
+                stats
+            );
         }
-      }
     }
 
-    /**
-     * Helper method to export/download a DOM document as an HTML file.
-     * @param {string|Document} domSource
-     * @param {string} filename
-     */
-    static exportDOMFile(domSource, filename = "sanitized_dom.html") {
-      let content = "";
-      if (typeof domSource === "string") {
-        content = domSource;
-      } else if (domSource && domSource.documentElement) {
-        content = domSource.doctype
-          ? `<!DOCTYPE ${domSource.doctype.name}>\n${domSource.documentElement.outerHTML}`
-          : domSource.documentElement.outerHTML;
-      } else {
-        throw new Error("Invalid DOM source for file export.");
-      }
 
-      const blob = new Blob([content], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+    /* =========================================================
+       TEXT NODE SCANNER
+       ========================================================= */
+
+    function sanitizeTextNodes(
+        doc,
+        stats
+    ) {
+
+        const root =
+            doc.body ||
+            doc;
+
+
+        const walker =
+            doc.createTreeWalker(
+
+                root,
+
+                NodeFilter.SHOW_TEXT
+            );
+
+
+        const nodes =
+            [];
+
+
+        let node;
+
+
+        while (
+            (
+                node =
+                    walker.nextNode()
+            )
+        ) {
+
+            const parent =
+                node.parentElement;
+
+
+            if (!parent) {
+                continue;
+            }
+
+
+            const tag =
+                parent.tagName.toLowerCase();
+
+
+            /*
+               Never executable.
+            */
+
+            if (
+                tag === "script" ||
+                tag === "style" ||
+                tag === "noscript" ||
+                tag === "template"
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               NEVER headings.
+            */
+
+            if (
+                isProtectedTextNode(
+                    node
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               NEVER labels.
+            */
+
+            if (
+                isPIILabelElement(
+                    parent
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               NEVER text inside label-like elements.
+            */
+
+            if (
+                isInsideLabelElement(
+                    parent
+                )
+            ) {
+
+                const labelAncestor =
+                    parent.closest(
+                        LABEL_SELECTOR
+                    );
+
+
+                if (
+                    labelAncestor &&
+                    isPIILabelElement(
+                        labelAncestor
+                    )
+                ) {
+
+                    continue;
+                }
+            }
+
+
+            nodes.push(
+                node
+            );
+        }
+
+
+        /*
+           Sanitize collected nodes.
+        */
+
+        for (
+            const textNode
+            of nodes
+        ) {
+
+            const parent =
+                textNode.parentElement;
+
+
+            if (!parent) {
+                continue;
+            }
+
+
+            /*
+               Final heading protection.
+            */
+
+            if (
+                isProtectedTextNode(
+                    textNode
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Final label protection.
+            */
+
+            if (
+                isPIILabelElement(
+                    parent
+                )
+            ) {
+
+                continue;
+            }
+
+
+            if (
+                isInsideLabelElement(
+                    parent
+                )
+            ) {
+
+                const labelAncestor =
+                    parent.closest(
+                        LABEL_SELECTOR
+                    );
+
+
+                if (
+                    labelAncestor &&
+                    isPIILabelElement(
+                        labelAncestor
+                    )
+                ) {
+
+                    continue;
+                }
+            }
+
+
+            const oldValue =
+                textNode.nodeValue;
+
+
+            const context =
+                getContext(
+                    parent
+                );
+
+
+            const newValue =
+                sanitizeText(
+                    oldValue,
+                    context,
+                    stats
+                );
+
+
+            if (
+                oldValue !==
+                newValue
+            ) {
+
+                textNode.nodeValue =
+                    newValue;
+            }
+        }
     }
-  }
 
-  // Expose helper functions and class
-  DOMRedactor.isValidLuhn = isValidLuhn;
-  DOMRedactor.redactString = redactString;
 
-  return DOMRedactor;
-});
+    /* =========================================================
+       FORM SANITIZATION
+       ========================================================= */
+
+    function sanitizeForms(
+        doc,
+        stats
+    ) {
+
+        const controls =
+            doc.querySelectorAll(
+                "input,textarea,select"
+            );
+
+
+        for (
+            const element
+            of controls
+        ) {
+
+            /*
+               Preserve controls within protected regions.
+            */
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Preserve placeholder.
+            */
+
+            const originalPlaceholder =
+                element.getAttribute(
+                    "placeholder"
+                );
+
+
+            const name =
+                normalize(
+                    element.getAttribute(
+                        "name"
+                    )
+                );
+
+
+            const id =
+                normalize(
+                    element.id
+                );
+
+
+            const context =
+                getContext(
+                    element
+                );
+
+
+            const type =
+                normalize(
+                    element.getAttribute(
+                        "type"
+                    )
+                );
+
+
+            /*
+               Placeholder NOT included.
+            */
+
+            const combined =
+                [
+
+                    context,
+
+                    name,
+
+                    id
+
+                ].join(" ");
+
+
+            const piiLabel =
+                findPIILabel(
+                    combined
+                );
+
+
+            /*
+               Date input is always sensitive.
+            */
+
+            const sensitive =
+
+                !!piiLabel
+
+                ||
+
+                /password|email|tel|phone|card|date|hidden/i
+                    .test(
+                        type
+                    );
+
+
+            if (
+                sensitive &&
+                "value" in element &&
+                element.value
+            ) {
+
+                if (
+                    element.tagName.toLowerCase() ===
+                        "select"
+                ) {
+
+                    for (
+                        const option
+                        of Array.from(
+                            element.options
+                        )
+                    ) {
+
+                        if (!option.selected) {
+                            continue;
+                        }
+
+
+                        option.value =
+                            replacement(stats);
+
+
+                        option.textContent =
+                            replacement(stats);
+                    }
+
+                } else {
+
+                    element.value =
+                        replacement(stats);
+
+
+                    if (
+                        element.hasAttribute(
+                            "value"
+                        )
+                    ) {
+
+                        element.setAttribute(
+                            "value",
+                            replacement(stats)
+                        );
+                    }
+                }
+
+
+                increment(
+                    stats,
+                    "FORM"
+                );
+            }
+
+
+            /*
+               Restore placeholder exactly.
+            */
+
+            if (
+                originalPlaceholder !==
+                null
+            ) {
+
+                element.setAttribute(
+                    "placeholder",
+                    originalPlaceholder
+                );
+            }
+        }
+    }
+
+
+    /* =========================================================
+       ATTRIBUTE SANITIZATION
+       ========================================================= */
+
+    function sanitizeAttributes(
+        doc,
+        stats
+    ) {
+
+        const elements =
+            Array.from(
+                doc.querySelectorAll("*")
+            );
+
+
+        for (
+            const element
+            of elements
+        ) {
+
+            /*
+               Never modify headings.
+            */
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            /*
+               Never executable.
+            */
+
+            if (
+                isExecutableElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const attributes =
+                Array.from(
+                    element.attributes
+                );
+
+
+            for (
+                const attribute
+                of attributes
+            ) {
+
+                const name =
+                    normalize(
+                        attribute.name
+                    );
+
+
+                const value =
+                    attribute.value;
+
+
+                if (!value) {
+                    continue;
+                }
+
+
+                /*
+                   PLACEHOLDER IS NEVER TOUCHED.
+                */
+
+                if (
+                    name ===
+                    "placeholder"
+                ) {
+
+                    continue;
+                }
+
+
+                /*
+                   Explicit sensitive data attributes.
+                */
+
+                if (
+                    SENSITIVE_ATTRIBUTES.has(
+                        name
+                    )
+                ) {
+
+                    element.setAttribute(
+                        attribute.name,
+                        replacement(stats)
+                    );
+
+
+                    increment(
+                        stats,
+                        "ATTRIBUTE"
+                    );
+
+
+                    continue;
+                }
+
+
+                /*
+                   Generic sensitive data-*.
+                */
+
+                if (
+
+                    name.startsWith(
+                        "data-"
+                    )
+
+                    &&
+
+                    /name|email|phone|mobile|address|city|state|country|account|card|cvv|token|secret|password|otp|pin|user|employee|student|patient|location|dob|birth|nominee|tax|upi|ifsc|passport|voter|vehicle|vin|imei|date|father|mother|parent|guardian/i
+                        .test(
+                            name
+                        )
+                ) {
+
+                    element.setAttribute(
+                        attribute.name,
+                        replacement(stats)
+                    );
+
+
+                    increment(
+                        stats,
+                        "DATA_ATTRIBUTE"
+                    );
+                }
+            }
+        }
+    }
+
+
+    /* =========================================================
+       DATASET SANITIZATION
+       ========================================================= */
+
+    function sanitizeDataset(
+        doc,
+        stats
+    ) {
+
+        const elements =
+            Array.from(
+                doc.querySelectorAll("*")
+            );
+
+
+        for (
+            const element
+            of elements
+        ) {
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const keys =
+                Object.keys(
+                    element.dataset ||
+                    {}
+                );
+
+
+            for (
+                const key
+                of keys
+            ) {
+
+                const lower =
+                    normalize(
+                        key
+                    );
+
+
+                if (
+                    !/name|email|phone|mobile|address|city|state|country|account|card|cvv|token|secret|password|otp|pin|user|employee|student|patient|location|dob|birth|nominee|tax|upi|ifsc|passport|voter|vehicle|vin|imei|date|father|mother|parent|guardian/i
+                        .test(
+                            lower
+                        )
+                ) {
+
+                    continue;
+                }
+
+
+                if (
+                    element.dataset[key]
+                ) {
+
+                    element.dataset[key] =
+                        replacement(stats);
+
+
+                    increment(
+                        stats,
+                        "DATASET"
+                    );
+                }
+            }
+        }
+    }
+
+
+    /* =========================================================
+       URL SANITIZATION
+       ========================================================= */
+
+    function sanitizeURLs(
+        doc,
+        stats
+    ) {
+
+        const elements =
+            Array.from(
+                doc.querySelectorAll(
+                    "[href],[src],[action]"
+                )
+            );
+
+
+        for (
+            const element
+            of elements
+        ) {
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            let attribute =
+                null;
+
+
+            if (
+                element.hasAttribute(
+                    "href"
+                )
+            ) {
+
+                attribute =
+                    "href";
+
+            } else if (
+                element.hasAttribute(
+                    "src"
+                )
+            ) {
+
+                attribute =
+                    "src";
+
+            } else if (
+                element.hasAttribute(
+                    "action"
+                )
+            ) {
+
+                attribute =
+                    "action";
+            }
+
+
+            if (!attribute) {
+                continue;
+            }
+
+
+            const value =
+                element.getAttribute(
+                    attribute
+                );
+
+
+            if (!value) {
+                continue;
+            }
+
+
+            try {
+
+                const url =
+                    new URL(
+                        value,
+                        "https://privacy-redactor.local"
+                    );
+
+
+                const sensitiveKeys =
+                    [];
+
+
+                url.searchParams.forEach(
+
+                    function (_, key) {
+
+                        if (
+                            /email|phone|mobile|name|user|id|account|card|token|secret|password|otp|pin|address|dob|birth|passport|ifsc|upi|location|date|father|mother|parent/i
+                                .test(
+                                    key
+                                )
+                        ) {
+
+                            sensitiveKeys.push(
+                                key
+                            );
+                        }
+                    }
+                );
+
+
+                for (
+                    const key
+                    of sensitiveKeys
+                ) {
+
+                    url.searchParams.set(
+                        key,
+                        replacement(stats)
+                    );
+
+
+                    increment(
+                        stats,
+                        "URL"
+                    );
+                }
+
+
+                let output;
+
+
+                if (
+                    value.startsWith("/") ||
+                    value.startsWith("./") ||
+                    value.startsWith("../") ||
+                    value.startsWith("?")
+                ) {
+
+                    output =
+                        url.pathname +
+                        url.search +
+                        url.hash;
+
+                } else {
+
+                    output =
+                        url.toString();
+                }
+
+
+                element.setAttribute(
+                    attribute,
+                    output
+                );
+
+            } catch (error) {
+
+                /*
+                   Leave malformed URLs unchanged.
+                */
+            }
+        }
+    }
+
+
+    /* =========================================================
+       COMMENT SANITIZATION
+       ========================================================= */
+
+    function sanitizeComments(
+        doc,
+        stats
+    ) {
+
+        const walker =
+            doc.createTreeWalker(
+                doc,
+                NodeFilter.SHOW_COMMENT
+            );
+
+
+        const comments =
+            [];
+
+
+        let node;
+
+
+        while (
+            (
+                node =
+                    walker.nextNode()
+            )
+        ) {
+
+            comments.push(
+                node
+            );
+        }
+
+
+        for (
+            const comment
+            of comments
+        ) {
+
+            comment.nodeValue =
+                sanitizeText(
+                    comment.nodeValue,
+                    "comment",
+                    stats
+                );
+        }
+    }
+
+
+    /* =========================================================
+       META SANITIZATION
+       ========================================================= */
+
+    function sanitizeMeta(
+        doc,
+        stats
+    ) {
+
+        const meta =
+            Array.from(
+                doc.querySelectorAll(
+                    "meta"
+                )
+            );
+
+
+        for (
+            const element
+            of meta
+        ) {
+
+            const name =
+                normalize(
+
+                    element.getAttribute(
+                        "name"
+                    )
+
+                    ||
+
+                    element.getAttribute(
+                        "property"
+                    )
+
+                    ||
+
+                    ""
+                );
+
+
+            const content =
+                element.getAttribute(
+                    "content"
+                );
+
+
+            if (!content) {
+                continue;
+            }
+
+
+            if (
+                /author|creator|owner|email|phone|profile|user|person|name|location|address|date|father|mother|parent/i
+                    .test(
+                        name
+                    )
+            ) {
+
+                element.setAttribute(
+                    "content",
+                    replacement(stats)
+                );
+
+
+                increment(
+                    stats,
+                    "META"
+                );
+            }
+        }
+    }
+
+
+    /* =========================================================
+       STYLE SANITIZATION
+       ========================================================= */
+
+    function sanitizeStyles(
+        doc,
+        stats
+    ) {
+
+        const elements =
+            Array.from(
+                doc.querySelectorAll(
+                    "[style]"
+                )
+            );
+
+
+        for (
+            const element
+            of elements
+        ) {
+
+            if (
+                isProtectedElement(
+                    element
+                )
+            ) {
+
+                continue;
+            }
+
+
+            const oldStyle =
+                element.getAttribute(
+                    "style"
+                );
+
+
+            if (!oldStyle) {
+                continue;
+            }
+
+
+            const newStyle =
+                redactPatterns(
+                    oldStyle,
+                    stats
+                );
+
+
+            if (
+                newStyle !==
+                oldStyle
+            ) {
+
+                element.setAttribute(
+                    "style",
+                    newStyle
+                );
+            }
+        }
+    }
+
+
+    /* =========================================================
+       ACCESSIBILITY
+       ========================================================= */
+
+    function sanitizeAccessibility(
+        doc,
+        stats
+    ) {
+
+        /*
+           Intentionally conservative.
+
+           These attributes are preserved:
+
+           aria-label
+           aria-description
+           title
+           alt
+
+           This prevents labels such as:
+
+           "Enter your full name"
+           "Enter your date of birth"
+
+           from being redacted.
+        */
+    }
+
+
+    /* =========================================================
+       STATS
+       ========================================================= */
+
+    function createStats() {
+
+        const stats = {
+
+            total:
+                0,
+
+            byType:
+                {},
+
+            startedAt:
+                Date.now(),
+
+            finishedAt:
+                null,
+
+            duration:
+                0
+        };
+
+
+        Object.defineProperty(
+            stats,
+            "options",
+            {
+                value:
+                    CONFIG,
+
+                enumerable:
+                    false,
+
+                configurable:
+                    true
+            }
+        );
+
+
+        return stats;
+    }
+
+
+    /* =========================================================
+       DOM REDACTOR CLASS
+       ========================================================= */
+
+    class DOMRedactor {
+
+        constructor(
+            options = {}
+        ) {
+
+            this.options = {
+
+                ...CONFIG,
+
+                ...options
+            };
+
+
+            this.stats =
+                createStats();
+        }
+
+
+        /* =====================================================
+           SANITIZE
+           ===================================================== */
+
+        async sanitize(
+            input
+        ) {
+
+            const stats =
+                createStats();
+
+
+            Object.defineProperty(
+                stats,
+                "options",
+                {
+                    value:
+                        this.options,
+
+                    enumerable:
+                        false,
+
+                    configurable:
+                        true
+                }
+            );
+
+
+            let html;
+
+
+            /*
+               STRING
+            */
+
+            if (
+                typeof input ===
+                "string"
+            ) {
+
+                html =
+                    input;
+            }
+
+
+            /*
+               BLOB
+            */
+
+            else if (
+
+                typeof Blob !==
+                    "undefined" &&
+
+                input instanceof Blob
+
+            ) {
+
+                html =
+                    await input.text();
+            }
+
+
+            /*
+               DOCUMENT
+            */
+
+            else if (
+
+                typeof Document !==
+                    "undefined" &&
+
+                input instanceof Document
+
+            ) {
+
+                html =
+                    input
+                        .documentElement
+                        .outerHTML;
+            }
+
+
+            /*
+               ELEMENT
+            */
+
+            else if (
+
+                typeof Element !==
+                    "undefined" &&
+
+                input instanceof Element
+
+            ) {
+
+                html =
+                    input.outerHTML;
+            }
+
+
+            else {
+
+                throw new TypeError(
+
+                    "DOMRedactor.sanitize() expects HTML string, Blob, Document, or Element."
+
+                );
+            }
+
+
+            /*
+               PARSE
+            */
+
+            const parser =
+                new DOMParser();
+
+
+            const doc =
+                parser.parseFromString(
+                    html,
+                    "text/html"
+                );
+
+
+            /*
+               1. FIELD VALUES
+            */
+
+            if (
+                this.options.scanFieldValues
+            ) {
+
+                sanitizeLabeledFields(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               2. NORMAL TEXT
+            */
+
+            if (
+                this.options.scanText
+            ) {
+
+                sanitizeTextNodes(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               3. FORMS
+            */
+
+            if (
+                this.options.scanForms
+            ) {
+
+                sanitizeForms(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               4. ATTRIBUTES
+            */
+
+            if (
+                this.options.scanAttributes
+            ) {
+
+                sanitizeAttributes(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               5. DATASET
+            */
+
+            if (
+                this.options.scanDataset
+            ) {
+
+                sanitizeDataset(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               6. URLS
+            */
+
+            if (
+                this.options.scanURLs
+            ) {
+
+                sanitizeURLs(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               7. COMMENTS
+            */
+
+            if (
+                this.options.scanComments
+            ) {
+
+                sanitizeComments(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               8. META
+            */
+
+            if (
+                this.options.scanMeta
+            ) {
+
+                sanitizeMeta(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               9. STYLES
+            */
+
+            if (
+                this.options.scanStyles
+            ) {
+
+                sanitizeStyles(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               10. ACCESSIBILITY
+            */
+
+            if (
+                this.options.scanAccessibility
+            ) {
+
+                sanitizeAccessibility(
+                    doc,
+                    stats
+                );
+            }
+
+
+            /*
+               OUTPUT
+            */
+
+            const sanitizedHTML =
+
+                "<!DOCTYPE html>\n" +
+
+                doc.documentElement
+                    .outerHTML;
+
+
+            stats.finishedAt =
+                Date.now();
+
+
+            stats.duration =
+                stats.finishedAt -
+                stats.startedAt;
+
+
+            this.stats =
+                stats;
+
+
+            return {
+
+                doc:
+                    doc,
+
+                html:
+                    sanitizedHTML,
+
+                stats:
+                    stats
+            };
+        }
+
+
+        /* =====================================================
+           STATIC SANITIZE
+           ===================================================== */
+
+        static async sanitize(
+            input,
+            options = {}
+        ) {
+
+            const redactor =
+                new DOMRedactor(
+                    options
+                );
+
+
+            return redactor.sanitize(
+                input
+            );
+        }
+
+
+        /* =====================================================
+           EXPORT FILE
+           ===================================================== */
+
+        static exportDOMFile(
+            html,
+            filename =
+                "sanitized_output_dom.html"
+        ) {
+
+            const blob =
+                new Blob(
+                    [html],
+                    {
+                        type:
+                            "text/html;charset=utf-8"
+                    }
+                );
+
+
+            const url =
+                URL.createObjectURL(
+                    blob
+                );
+
+
+            const anchor =
+                document.createElement(
+                    "a"
+                );
+
+
+            anchor.href =
+                url;
+
+
+            anchor.download =
+                filename;
+
+
+            anchor.style.display =
+                "none";
+
+
+            document.body.appendChild(
+                anchor
+            );
+
+
+            anchor.click();
+
+
+            setTimeout(
+
+                function () {
+
+                    anchor.remove();
+
+
+                    URL.revokeObjectURL(
+                        url
+                    );
+
+                },
+
+                1000
+            );
+        }
+
+
+        /* =====================================================
+           UTILITIES
+           ===================================================== */
+
+        static getPIICategories() {
+
+            return Object.keys(
+                PII_LABELS
+            );
+        }
+
+
+        static getReplacement() {
+
+            return CONFIG.replacement;
+        }
+
+
+        static isCreditCard(
+            value
+        ) {
+
+            return passesLuhn(
+                value
+            );
+        }
+
+
+        static isProtected(
+            element
+        ) {
+
+            return isProtectedElement(
+                element
+            );
+        }
+    }
+
+
+    /* =========================================================
+       GLOBAL EXPORT
+       ========================================================= */
+
+    window.DOMRedactor =
+        DOMRedactor;
+
+
+    window.DOMRedactorConfig =
+        CONFIG;
+
+
+    window.DOMRedactorPIILabels =
+        PII_LABELS;
+
+
+    window.DOMRedactorProtection = {
+
+        isProtectedElement:
+            isProtectedElement,
+
+        isProtectedTextNode:
+            isProtectedTextNode,
+
+        isPIILabelElement:
+            isPIILabelElement
+    };
+
+
+})();
