@@ -1,0 +1,465 @@
+/**
+ * PrivSight — Agent Session Management Layer (session.js)
+ *
+ * Responsibilities:
+ *  1. Create, read, update, delete agent sessions stored in browser localStorage.
+ *  2. Provide a single source of truth under the "agentSessions" key.
+ *  3. Persist session state, prompts, status, and generated actions in real time.
+ *  4. Serve as the modular abstraction layer between the UI and backend execution,
+ *     making it easy to swap localStorage for remote API persistence in the future.
+ *  5. Isolate the backend communication placeholder so real backend API endpoints
+ *     can be plugged in without touching UI logic.
+ */
+
+(function (global) {
+  'use strict';
+
+  const SESSIONS_STORAGE_KEY = 'agentSessions';
+  const CURRENT_SESSION_ID_KEY = 'agentCurrentSessionId';
+
+  // Valid session statuses
+  const SessionStatus = Object.freeze({
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    STOPPED: 'stopped',
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // Helper: LocalStorage Access with Safe JSON Parsing
+  // ─────────────────────────────────────────────────────────
+
+  function getStorageData(key, defaultValue = null) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return defaultValue;
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[PrivSight Session] Failed to parse localStorage for key "${key}":`, err);
+      return defaultValue;
+    }
+  }
+
+  function setStorageData(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (err) {
+      console.error(`[PrivSight Session] Failed to save to localStorage for key "${key}":`, err);
+      return false;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Core Session CRUD Helpers
+  // ─────────────────────────────────────────────────────────
+
+  /**
+   * Retrieves all sessions from localStorage.
+   * @returns {Array<Object>} List of all session objects
+   */
+  function getAllSessions() {
+    const sessions = getStorageData(SESSIONS_STORAGE_KEY, []);
+    return Array.isArray(sessions) ? sessions : [];
+  }
+
+  /**
+   * Retrieves a specific session by its UUID.
+   * @param {string} id - The UUID of the session
+   * @returns {Object|null} The session object or null if not found
+   */
+  function getSession(id) {
+    if (!id) return null;
+    const sessions = getAllSessions();
+    return sessions.find((s) => s.id === id) || null;
+  }
+
+  /**
+   * Creates a new session, persists it to localStorage, and sets it as current.
+   * @param {string} task - The prompt / task entered by the user
+   * @param {Object} [metadata] - Optional initial metadata (e.g. domain, tabId)
+   * @returns {Object} The newly created session object
+   */
+  function createSession(task, metadata = {}) {
+    const id = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+    const now = new Date().toISOString();
+
+    const newSession = {
+      id,
+      task: typeof task === 'string' ? task.trim() : '',
+      status: SessionStatus.RUNNING,
+      actions: [],
+      metadata: {
+        createdAt: now,
+        updatedAt: now,
+        ...metadata,
+      },
+    };
+
+    const sessions = getAllSessions();
+    sessions.push(newSession);
+    setStorageData(SESSIONS_STORAGE_KEY, sessions);
+    setCurrentSessionId(id);
+    AgentBackendClient.resetRequestTimer();
+
+    console.debug(`[PrivSight Session] Created session "${id}" for task: "${newSession.task}"`);
+    return newSession;
+  }
+
+  /**
+   * Updates an existing session by ID with new data.
+   * @param {string} id - The UUID of the session
+   * @param {Object} data - Partial session properties to update
+   * @returns {Object|null} The updated session object or null if not found
+   */
+  function updateSession(id, data) {
+    if (!id || !data) return null;
+    const sessions = getAllSessions();
+    const index = sessions.findIndex((s) => s.id === id);
+    if (index === -1) {
+      console.warn(`[PrivSight Session] Cannot update: session "${id}" not found.`);
+      return null;
+    }
+
+    const current = sessions[index];
+    const now = new Date().toISOString();
+
+    const updated = {
+      ...current,
+      ...data,
+      metadata: {
+        ...(current.metadata || {}),
+        ...(data.metadata || {}),
+        updatedAt: now,
+      },
+    };
+
+    // If status changed to a completed/terminal state, set finishedAt
+    if (
+      data.status &&
+      data.status !== SessionStatus.RUNNING &&
+      !updated.metadata.finishedAt
+    ) {
+      updated.metadata.finishedAt = now;
+    }
+
+    sessions[index] = updated;
+    setStorageData(SESSIONS_STORAGE_KEY, sessions);
+
+    return updated;
+  }
+
+  /**
+   * Appends an agent action / response to a session's actions array.
+   * @param {string} id - The session UUID
+   * @param {Object} action - Action details generated by the agent or backend
+   * @returns {Object|null} The updated session or null
+   */
+  function appendActionToSession(id, action) {
+    if (!id || !action) return null;
+    const session = getSession(id);
+    if (!session) return null;
+
+    const actionWithMeta = {
+      id: typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'act_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      timestamp: new Date().toISOString(),
+      ...action,
+    };
+
+    const nextActions = [...(session.actions || []), actionWithMeta];
+    return updateSession(id, { actions: nextActions });
+  }
+
+  /**
+   * Deletes a session by ID from localStorage.
+   * @param {string} id - The UUID of the session
+   * @returns {boolean} True if deleted, false otherwise
+   */
+  function deleteSession(id) {
+    if (!id) return false;
+    const sessions = getAllSessions();
+    const filtered = sessions.filter((s) => s.id !== id);
+    if (filtered.length === sessions.length) return false;
+
+    setStorageData(SESSIONS_STORAGE_KEY, filtered);
+
+    if (getCurrentSessionId() === id) {
+      localStorage.removeItem(CURRENT_SESSION_ID_KEY);
+    }
+    return true;
+  }
+
+  /**
+   * Gets the active session ID.
+   * @returns {string|null}
+   */
+  function getCurrentSessionId() {
+    return localStorage.getItem(CURRENT_SESSION_ID_KEY) || null;
+  }
+
+  /**
+   * Sets the active session ID.
+   * @param {string|null} id
+   */
+  function setCurrentSessionId(id) {
+    if (id) {
+      localStorage.setItem(CURRENT_SESSION_ID_KEY, id);
+    } else {
+      localStorage.removeItem(CURRENT_SESSION_ID_KEY);
+    }
+  }
+
+  /**
+   * Retrieves the currently active session object from localStorage.
+   * @returns {Object|null}
+   */
+  function getCurrentSession() {
+    const currentId = getCurrentSessionId();
+    return currentId ? getSession(currentId) : null;
+  }
+
+  /**
+   * Handles cases where the page/panel is refreshed while a session is active.
+   * Checks if any sessions were left in 'running' state and updates them to 'stopped'.
+   */
+  function handlePageRefreshRecovery() {
+    const sessions = getAllSessions();
+    let hasChanges = false;
+    const now = new Date().toISOString();
+
+    const recovered = sessions.map((s) => {
+      if (s.status === SessionStatus.RUNNING) {
+        hasChanges = true;
+        return {
+          ...s,
+          status: SessionStatus.STOPPED,
+          metadata: {
+            ...(s.metadata || {}),
+            updatedAt: now,
+            finishedAt: now,
+            interruptedByReload: true,
+          },
+        };
+      }
+      return s;
+    });
+
+    if (hasChanges) {
+      setStorageData(SESSIONS_STORAGE_KEY, recovered);
+      console.info('[PrivSight Session] Recovered from reload: marked interrupted sessions as stopped.');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Backend Client & Communication Layer (Integration Guide)
+  // Base URL (dev): http://localhost:8000
+  // ─────────────────────────────────────────────────────────
+
+  const BASE_URL = 'http://10.35.119.248:8000';
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Minimum gap between consecutive backend requests (in milliseconds).
+  // >>> TO REMOVE: Change MIN_REQUEST_GAP_MS to 0, or remove the throttle block in postTurn <<<
+  // ─────────────────────────────────────────────────────────────────────────────
+  const MIN_REQUEST_GAP_MS = 2000; // 2 seconds minimum gap between requests
+  let lastRequestEndTime = 0;
+
+  const AgentBackendClient = {
+    BASE_URL,
+    MIN_REQUEST_GAP_MS,
+
+    /**
+     * Resets the request gap timer so the next request fires immediately.
+     */
+    resetRequestTimer() {
+      lastRequestEndTime = 0;
+    },
+
+    /**
+     * Check backend liveness.
+     * GET /health
+     * @returns {Promise<{ status: string }>}
+     */
+    async checkHealth() {
+      try {
+        const response = await fetch(`${BASE_URL}/health`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(`Health check returned HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (err) {
+        console.warn('[PrivSight Client] Backend health check failed:', err);
+        throw err;
+      }
+    },
+
+    /**
+     * Sends the current turn payload to the agent backend.
+     * POST /turn
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.taskGoal - Used on first call for a session
+     * @param {Array<Object>} params.sanitizedDom
+     * @param {string} params.sanitizedScreenshotB64 - Raw base64, no data: prefix
+     * @returns {Promise<{
+     *   session_id: string,
+     *   type: 'CLICK' | 'TYPE' | 'SCROLL' | 'DONE' | 'USER' | 'NEW_TAB' | 'GO_BACK' | 'GO_FORWARD',
+     *   data_hint: string | null,
+     *   element_id: string | null,
+     *   text: string | null,
+     *   url: string | null,
+     *   reasoning: string | null,
+     *   is_complete: boolean
+     * }>}
+     */
+    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64 }) {
+      if (!sessionId) {
+        throw new Error('postTurn: sessionId is required');
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // 2-SECOND DELAY BETWEEN REQUESTS
+      // >>> TO REMOVE: Delete or comment out this block, or change MIN_REQUEST_GAP_MS to 0 above <<<
+      // ─────────────────────────────────────────────────────────────────────────
+      if (MIN_REQUEST_GAP_MS > 0 && lastRequestEndTime > 0) {
+        const elapsed = Date.now() - lastRequestEndTime;
+        if (elapsed < MIN_REQUEST_GAP_MS) {
+          const waitMs = MIN_REQUEST_GAP_MS - elapsed;
+          console.log(`[PrivSight Client] Waiting ${waitMs}ms to enforce minimum ${MIN_REQUEST_GAP_MS}ms gap between requests...`);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      // Ensure screenshot is raw base64 with no data: prefix
+      const cleanB64 = (sanitizedScreenshotB64 || '').replace(
+        /^data:image\/[a-zA-Z+.-]+;base64,/,
+        ''
+      );
+
+      // Filter sanitized_dom to strictly include only data_hint and tag
+      const compactDom = (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
+        data_hint: String(el.data_hint !== undefined ? el.data_hint : el.datahint || ''),
+        tag: String(el.tag || 'div'),
+      }));
+
+      const payload = {
+        session_id: String(sessionId),
+        task_goal: String(taskGoal || ''),
+        sanitized_dom: compactDom,
+        sanitized_screenshot_b64: cleanB64,
+      };
+
+      console.log(`[PrivSight Client] POST /turn (session: ${sessionId}, elements: ${payload.sanitized_dom.length})`);
+
+      try {
+        const response = await fetch(`${BASE_URL}/turn`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          let errorDetail = `HTTP ${response.status}`;
+          try {
+            const errData = await response.json();
+            if (errData.detail) {
+              errorDetail = typeof errData.detail === 'string'
+                ? errData.detail
+                : JSON.stringify(errData.detail);
+            }
+          } catch (_) {}
+          throw new Error(`Backend /turn error: ${errorDetail}`);
+        }
+
+        const data = await response.json();
+        console.log('[PrivSight Client] /turn response:', data);
+        return data;
+      } finally {
+        lastRequestEndTime = Date.now();
+      }
+    },
+
+    /**
+     * Cancels / deletes a session on the backend.
+     * DELETE /session/{session_id}
+     *
+     * @param {string} sessionId
+     * @returns {Promise<Object>}
+     */
+    async deleteSession(sessionId) {
+      if (!sessionId) return { status: 'skipped' };
+      try {
+        const response = await fetch(`${BASE_URL}/session/${encodeURIComponent(sessionId)}`, {
+          method: 'DELETE',
+          headers: { Accept: 'application/json' },
+        });
+        if (response.status === 404) {
+          return { status: 'not_found' };
+        }
+        if (!response.ok) {
+          throw new Error(`DELETE /session returned HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (err) {
+        console.warn(`[PrivSight Client] DELETE /session/${sessionId} notice:`, err.message);
+        return { status: 'error', error: err.message };
+      }
+    },
+  };
+
+  /**
+   * Helper function to dispatch turns to backend or fallback gracefully
+   */
+  async function fetchAgentAction(session, turnContext = {}) {
+    return await AgentBackendClient.postTurn({
+      sessionId: session.id,
+      taskGoal: session.task,
+      sanitizedDom: turnContext.sanitized_dom || [],
+      sanitizedScreenshotB64: turnContext.sanitized_screenshot_b64 || '',
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // Export Public Interface
+  // ─────────────────────────────────────────────────────────
+
+  const AgentSessionManager = {
+    SessionStatus,
+    getAllSessions,
+    getSession,
+    createSession,
+    updateSession,
+    deleteSession,
+    getCurrentSession,
+    getCurrentSessionId,
+    setCurrentSessionId,
+    appendActionToSession,
+    handlePageRefreshRecovery,
+    fetchAgentAction,
+    AgentBackendClient,
+  };
+
+  // Expose on global window object
+  global.AgentBackendClient = AgentBackendClient;
+  global.AgentSessionManager = AgentSessionManager;
+  global.createSession = createSession;
+  global.getSession = getSession;
+  global.updateSession = updateSession;
+  global.deleteSession = deleteSession;
+  global.getAllSessions = getAllSessions;
+
+})(typeof window !== 'undefined' ? window : this);
+

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrivSight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+
+
+<!-- Gemini-style ambient idle glow ── hidden once agent runs ── -->
+  <div id="ps-glow-orbs" aria-hidden="true">
+    <div class="ps-glow-orb ps-glow-orb--bottom"></div>
+    <div class="ps-glow-orb ps-glow-orb--top"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       TOP TOOLBAR / HEADER — logo, status, dashboard, theme, close
+  ══════════════════════════════════════════════════════ -->
+  <header class="ps-toolbar" id="ps-toolbar">
+    <!-- Left: logo + status -->
+    <div class="ps-toolbar__left">
+      <div class="ps-logo" id="ps-logo">
+        <img src="../icons/icon48.png" alt="PrivSight" class="ps-logo-img">
+      </div>
+      <div class="ps-status-badge" id="ps-status-badge">
+        <span class="ps-status-dot" id="ps-status-dot"></span>
+        <span class="ps-status-text" id="ps-status-text">Ready</span>
+      </div>
+    </div>
+    <!-- Right: dashboard + theme + close -->
+    <div class="ps-toolbar__right">
+      <button class="ps-icon-btn ps-dashboard-btn" id="ps-dashboard-btn" title="Open Analytics Dashboard" aria-label="Open Dashboard">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </button>
+      <!-- Close Button -->
+      <button class="ps-icon-btn ps-close-btn" id="ps-close-btn" title="Close panel" aria-label="Close panel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════
+       MAIN CONTENT AREA
+  ══════════════════════════════════════════════════════ -->
+  <main class="ps-main" id="ps-main">
+
+    <!-- ── Chat messages (scrollable) ──────────────────── -->
+    <div class="ps-chat" id="ps-chat" role="log" aria-live="polite">
+
+      <!-- IDLE PLACEHOLDER (shown when no messages) -->
+      <div class="ps-idle" id="ps-idle">
+
+
+        <div class="ps-idle__icon">
+          <img src="../icons/icon256.png" alt="PrivSight" class="ps-idle__logo-img">
+        </div>
+        <h2 class="ps-idle__title">How can I help on this page?</h2>
+        <p class="ps-idle__sub">PrivSight can interact with the current page while keeping your sensitive information protected.</p>
+      </div>
+
+      <!-- MESSAGES will be injected here by sidepanel.js -->
+
+    </div>
+
+    <!-- ── Human-in-the-loop User Action Prompt (visible on USER type) ── -->
+    <div class="ps-user-prompt" id="ps-user-prompt" style="display: none;">
+      <div class="ps-user-prompt__header">
+        <span class="ps-user-prompt__badge">Action Required</span>
+      </div>
+      <p class="ps-user-prompt__text" id="ps-user-prompt-text"></p>
+      <div class="ps-user-prompt__actions">
+        <button class="ps-btn ps-btn--primary" id="ps-resume-btn">Resume Agent</button>
+        <button class="ps-btn ps-btn--secondary" id="ps-cancel-btn">Cancel</button>
+      </div>
+    </div>
+
+    <!-- ── Agent activity log (visible while working) ──── -->
+    <div class="ps-activity" id="ps-activity" aria-hidden="true">
+      <p class="ps-activity__title" id="ps-activity-title">Working on this page</p>
+      <ul class="ps-activity__steps" id="ps-activity-steps">
+        <!-- Steps injected by JS -->
+      </ul>
+    </div>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       BOTTOM TOOLBAR — input + quick actions + stats
+  ══════════════════════════════════════════════════════ -->
+  <footer class="ps-footer" id="ps-footer">
+
+    <!-- Quick actions -->
+    <div class="ps-quick-actions" id="ps-quick-actions">
+      <span class="ps-quick-actions__label">Try asking</span>
+      <div class="ps-quick-actions__chips">
+        <button class="ps-chip" data-prompt="Find something on this page" id="ps-chip-find">Find something</button>
+        <button class="ps-chip" data-prompt="Fill out this form" id="ps-chip-form">Fill a form</button>
+        <button class="ps-chip" data-prompt="Summarize this page" id="ps-chip-summarize">Summarize</button>
+      </div>
+    </div>
+
+    <!-- Input row -->
+    <div class="ps-input-row" id="ps-input-row">
+      <div class="ps-input-wrap">
+        <textarea
+          class="ps-input"
+          id="ps-input"
+          rows="1"
+          placeholder="Ask PrivSight to do something..."
+          maxlength="2000"
+          aria-label="Ask PrivSight"
+        ></textarea>
+        <button class="ps-send-btn" id="ps-send-btn" aria-label="Send" title="Send">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+
+
+  </footer>
+  <script src="lib/marked.umd.js"></script>
+  <script src="session.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
