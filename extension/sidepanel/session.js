@@ -260,7 +260,7 @@
   // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
-  const BASE_URL = 'http://10.35.119.248:8000';
+  const BASE_URL = 'http://172.19.143.248:8000';
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Minimum gap between consecutive backend requests (in milliseconds).
