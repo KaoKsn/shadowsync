@@ -95,9 +95,9 @@
 
     // ── 1. Soft Multi-Hue Ambient Glow (outside the orb) ────────────────
     const outerHalo = ctx.createRadialGradient(CX, CY, BASE_R * 0.75, CX, CY, BASE_R * 1.55);
-    outerHalo.addColorStop(0.0, 'rgba(56, 189, 248, 0.18)');
-    outerHalo.addColorStop(0.35, 'rgba(147, 51, 234, 0.12)');
-    outerHalo.addColorStop(0.65, 'rgba(244, 63, 94, 0.08)');
+    outerHalo.addColorStop(0.0, 'rgba(56, 189, 248, 0.02)');
+    outerHalo.addColorStop(0.35, 'rgba(147, 51, 234, 0.01)');
+    outerHalo.addColorStop(0.65, 'rgba(244, 63, 94, 0.008)');
     outerHalo.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
     ctx.beginPath();
     ctx.arc(CX, CY, BASE_R * 1.55, 0, Math.PI * 2);

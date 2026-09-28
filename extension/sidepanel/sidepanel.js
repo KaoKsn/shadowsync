@@ -605,7 +605,11 @@
    */
   async function runAgentLoop(taskGoal, sessionId, domain) {
     let turnCount = 0;
+    let stepCount = 0;  // 0-indexed step counter sent in the snapshot
     let isComplete = false;
+    // Track the previous snapshot's elements so we can compute changed_since_last_step
+    let prevElements = [];
+    let lastElements = [];  // elements from the most recent snapshot (reused for screenshot calls)
 
     updateAgentStatus('connecting');
     renderActivity('connecting', 'Connecting to agent...');
@@ -629,7 +633,7 @@
 
         // ── STEP A: Capture sanitized DOM + redacted screenshot ──
         updateAgentStatus('reading_page');
-        renderActivity('reading_page', `Turn ${turnCount + 1}: Scrubbing DOM and capturing screenshot...`);
+        renderActivity('reading_page', `Step ${stepCount + 1}: Scrubbing DOM and capturing screenshot...`);
 
         const capturedState = await captureActiveTabState();
         if (activeLoopAborted) break;
@@ -642,33 +646,63 @@
           updatePrivacyStats(stats);
         }
 
-        // ── STEP B: POST /turn to Backend ──
+        // ── Compute changed_since_last_step ──────────────────────────────
+        // Compare current elements to the previous snapshot by mark_id.
+        // An element is "changed" if its text, value, or redacted flag differs.
+        const currentElements = capturedState.sanitized_dom || [];
+        const changedSinceLastStep = [];
+        if (prevElements.length > 0) {
+          const prevMap = new Map(prevElements.map((e) => [e.mark_id, e]));
+          currentElements.forEach((el) => {
+            const prev = prevMap.get(el.mark_id);
+            if (!prev ||
+                prev.text !== el.text ||
+                prev.value !== el.value ||
+                prev.redacted !== el.redacted) {
+              changedSinceLastStep.push(el.mark_id);
+            }
+          });
+        }
+        prevElements = currentElements;
+        lastElements = currentElements;
+
+        // ── STEP B: POST /task/start (first) or /task/step (subsequent) ──
         updateAgentStatus('planning');
-        renderActivity('planning', `Turn ${turnCount + 1}: Waiting for agent reasoning...`);
+        renderActivity('planning', `Step ${stepCount + 1}: Waiting for agent reasoning...`);
 
         const turnPayload = {
           sessionId,
           taskGoal: turnCount === 0 ? taskGoal : '', // only used on first turn
           sanitizedDom: capturedState.sanitized_dom || [],
           sanitizedScreenshotB64: capturedState.sanitized_screenshot_b64 || '',
+          step: stepCount,
+          changedSinceLastStep,
         };
 
         const turnResponse = await AgentBackendClient.postTurn(turnPayload);
         if (activeLoopAborted) break;
 
-        console.log(`[PrivSight Loop] Turn ${turnCount + 1} response:`, turnResponse);
+        console.log(`[PrivSight Loop] Step ${stepCount + 1} response:`, turnResponse);
 
         // Record reasoning if provided
         if (turnResponse.reasoning) {
           renderActivity('planning', turnResponse.reasoning);
         }
 
-        // Check completion flag
+        // Check completion / failure flags
         if (turnResponse.is_complete || turnResponse.type === 'DONE') {
           isComplete = true;
-          const finalReply = turnResponse.text || "Task completed successfully while keeping your sensitive data protected.";
+          const finalReply = turnResponse.text || turnResponse.summary || "Task completed successfully while keeping your sensitive data protected.";
           addMessage('agent', finalReply);
           updateAgentStatus('completed');
+          renderActivity(null);
+          break;
+        }
+
+        if (turnResponse.is_failed) {
+          const failMsg = turnResponse.text || turnResponse.summary || 'The agent encountered an error completing the task.';
+          addMessage('agent', `❌ ${failMsg}`);
+          updateAgentStatus('error');
           renderActivity(null);
           break;
         }
@@ -724,6 +758,56 @@
             break;
           }
 
+          case 'REQUEST_SCREENSHOT': {
+            // The backend wants a screenshot — do NOT touch the DOM.
+            // Capture + redact a fresh screenshot and POST it via /task/screenshot.
+            updateAgentStatus('reading_page');
+            renderActivity('reading_page', 'Capturing screenshot for agent vision...');
+
+            try {
+              const tab = await resolveActiveTab();
+              if (tab?.id) {
+                // Capture screenshot via the content script (same pipeline with face/QR redaction)
+                const screenshotState = await captureActiveTabState();
+                const screenshotB64 = screenshotState?.sanitized_screenshot_b64 || '';
+
+                // POST /task/screenshot — same elements as last step, no DOM changes
+                const screenshotResponse = await AgentBackendClient.postTaskScreenshot({
+                  sessionId,
+                  task: taskGoal,
+                  step: stepCount,
+                  elements: lastElements.map((el) => ({
+                    mark_id:          el.mark_id,
+                    tag:              el.tag,
+                    role:             el.role || null,
+                    text:             el.text != null ? el.text : null,
+                    value:            el.value != null ? el.value : null,
+                    redacted:         Boolean(el.redacted),
+                    redaction_reason: el.redaction_reason || undefined,
+                  })),
+                  screenshotB64,
+                });
+
+                if (activeLoopAborted) break;
+
+                console.log('[PrivSight Loop] /task/screenshot response:', screenshotResponse);
+
+                // The screenshot response is itself an action — handle it without
+                // incrementing the turn counter (DOM did not change).
+                // Re-enter the switch by overwriting turnResponse so the outer
+                // loop picks it up on the NEXT iteration naturally.
+                // We treat this as if it were a normal response: just store it so
+                // the loop continues to the action-execution block.
+                // The simplest correct approach: push it back as the "next" response.
+                // Since we are inside a switch block we cannot reassign turnResponse,
+                // so we set execResult to a sentinel that skips the turn increment.
+                execResult = { _screenshotActionResponse: screenshotResponse };
+              }
+            } catch (ssErr) {
+              console.warn('[PrivSight Loop] Screenshot capture for /task/screenshot failed:', ssErr);
+            }
+            break;
+          }
           case 'USER': {
             // Pause loop, display instruction, wait for user confirmation
             updateAgentStatus('user_action');
@@ -768,6 +852,13 @@
         }
 
         turnCount++;
+        // Only advance the snapshot step counter when the DOM actually changed.
+        // REQUEST_SCREENSHOT does not change the DOM, so stepCount stays the same
+        // for the next /task/step call (which will reflect the action that was
+        // performed after the screenshot).
+        if (turnResponse.type !== 'REQUEST_SCREENSHOT') {
+          stepCount++;
+        }
         // Small delay to allow DOM render between turns
         await new Promise((r) => setTimeout(r, 600));
       }
