@@ -411,6 +411,8 @@
                 'content/redactor.js',
                 'content/faceRedaction.js',
                 'content/qrMask.js',
+                'content/pii-config.js',
+                'content/pii-autofill.js',
                 'content/agent.js',
               ],
             },
