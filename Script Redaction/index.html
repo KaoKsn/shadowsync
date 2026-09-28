@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PII Redactor</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <header>
+    <h1>PII Redactor</h1>
+    <div id="ner-status" class="ner-badge ner-loading">NER: Loading...</div>
+  </header>
+
+  <main>
+    <!-- SECTION 1: TEXT REDACTION -->
+    <section class="section-box">
+      <h2>1. Text Redaction <span class="ner-inline" id="ner-inline-text"></span></h2>
+      
+      <div class="controls-row">
+        <label for="text-style">Redaction Style: </label>
+        <select id="text-style">
+          <option value="token">Token Tag [REDACTED_TYPE]</option>
+          <option value="blackout">Blackout Block (████████)</option>
+          <option value="mask">Mask (•••• 1234)</option>
+        </select>
+        <button id="btn-redact-text" class="btn">Redact Text</button>
+      </div>
+
+      <div class="split-view">
+        <div class="split-col">
+          <label for="text-input">Input Text:</label>
+          <textarea id="text-input" placeholder="Paste text here to redact..."></textarea>
+        </div>
+        <div class="split-col">
+          <label for="text-output">Redacted Text:</label>
+          <textarea id="text-output" readonly placeholder="Redacted text will appear here..."></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: HTML FILE UPLOAD -->
+    <section class="section-box">
+      <h2>2. HTML File Redaction <span class="ner-inline" id="ner-inline-html"></span></h2>
+
+      <div class="controls-row">
+        <label for="html-upload">Upload HTML File: </label>
+        <input type="file" id="html-upload" accept=".html,.htm,.txt">
+        
+        <label for="html-style" style="margin-left: 15px;">Style: </label>
+        <select id="html-style">
+          <option value="token">Token Tag [REDACTED_TYPE]</option>
+          <option value="blackout">Blackout Block (████████)</option>
+          <option value="mask">Mask (•••• 1234)</option>
+        </select>
+
+        <button id="btn-download-html" class="btn" style="display: none; margin-left: auto;">Download Redacted HTML</button>
+      </div>
+
+      <div class="split-view">
+        <div class="split-col">
+          <div class="col-header">
+            <label>Original HTML (Before Redaction):</label>
+            <button type="button" class="btn-sm" id="toggle-orig-code">View Code</button>
+          </div>
+          <div class="preview-container">
+            <iframe id="orig-iframe" class="preview-frame"></iframe>
+            <textarea id="orig-code" class="code-view" readonly style="display: none;"></textarea>
+          </div>
+        </div>
+
+        <div class="split-col">
+          <div class="col-header">
+            <label>Redacted HTML (After Redaction):</label>
+            <button type="button" class="btn-sm" id="toggle-redacted-code">View Code</button>
+          </div>
+          <div class="preview-container">
+            <iframe id="redacted-iframe" class="preview-frame"></iframe>
+            <textarea id="redacted-code" class="code-view" readonly style="display: none;"></textarea>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Compromise.js: Lightweight in-browser NLP/NER (Pass 3 of redaction pipeline) -->
+  <script src="https://cdn.jsdelivr.net/npm/compromise@14/builds/compromise.js"
+    onload="window._compromiseLoaded=true;document.dispatchEvent(new Event('compromise-ready'));"
+    onerror="window._compromiseLoaded=false;document.dispatchEvent(new Event('compromise-failed'));"
+    crossorigin="anonymous"></script>
+  <script src="js/pii-redactor.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
