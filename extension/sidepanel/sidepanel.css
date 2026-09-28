@@ -112,13 +112,11 @@ body.agent-active #ps-glow-orbs {
   left: 50%;
   background: radial-gradient(
     ellipse at 50% 50%,
-    rgba(29,  78, 216, 0.42)   0%,
-    rgba(37,  99, 235, 0.30)  22%,
-    rgba(67,  56, 202, 0.18)  48%,
-    rgba(17,  24,  39, 0.08)  70%,
+    rgba(29,  78, 216, 0.03)   0%,
+    rgba(37,  99, 235, 0.015) 22%,
     transparent               100%
   );
-  filter: blur(80px);
+  filter: blur(90px);
   animation: orb-drift-bottom 9s ease-in-out infinite;
 }
 
@@ -130,36 +128,28 @@ body.agent-active #ps-glow-orbs {
   left: -70px;
   background: radial-gradient(
     ellipse at 55% 45%,
-    rgba(37,  99, 235, 0.28)   0%,
-    rgba(29,  78, 216, 0.18)  35%,
-    rgba(67,  56, 202, 0.08)  65%,
+    rgba(37,  99, 235, 0.02)   0%,
     transparent               100%
   );
-  filter: blur(64px);
+  filter: blur(72px);
   animation: orb-drift-top 12s ease-in-out infinite;
   animation-delay: -5s;
 }
 
 /* ── Fluid drift — primary (large bottom orb) ── */
 @keyframes orb-drift-bottom {
-  0%   { transform: translateX(-50%) translateY(0px)   scale(1.00); opacity: 0.80; }
-  15%  { transform: translateX(-46%) translateY(-20px) scale(1.07); opacity: 0.95; }
-  32%  { transform: translateX(-54%) translateY(-12px) scale(0.95); opacity: 0.85; }
-  50%  { transform: translateX(-48%) translateY(-30px) scale(1.12); opacity: 1.00; }
-  67%  { transform: translateX(-56%) translateY(-10px) scale(1.04); opacity: 0.88; }
-  84%  { transform: translateX(-44%) translateY(-22px) scale(0.97); opacity: 0.90; }
-  100% { transform: translateX(-50%) translateY(0px)   scale(1.00); opacity: 0.80; }
+  0%   { transform: translateX(-50%) translateY(0px)   scale(1.00); opacity: 0.18; }
+  15%  { transform: translateX(-46%) translateY(-20px) scale(1.07); opacity: 0.25; }
+  50%  { transform: translateX(-48%) translateY(-30px) scale(1.12); opacity: 0.22; }
+  100% { transform: translateX(-50%) translateY(0px)   scale(1.00); opacity: 0.18; }
 }
 
 /* ── Fluid drift — accent (upper-left orb) ── */
 @keyframes orb-drift-top {
-  0%   { transform: translate(0px,   0px)  scale(1.00); opacity: 0.65; }
-  18%  { transform: translate(28px,  20px) scale(1.10); opacity: 0.85; }
-  38%  { transform: translate(14px,  38px) scale(0.93); opacity: 0.72; }
-  55%  { transform: translate(36px,  16px) scale(1.14); opacity: 0.90; }
-  73%  { transform: translate(10px,  32px) scale(1.03); opacity: 0.75; }
-  88%  { transform: translate(22px,   8px) scale(0.96); opacity: 0.68; }
-  100% { transform: translate(0px,    0px) scale(1.00); opacity: 0.65; }
+  0%   { transform: translate(0px,   0px)  scale(1.00); opacity: 0.15; }
+  18%  { transform: translate(28px,  20px) scale(1.10); opacity: 0.20; }
+  55%  { transform: translate(36px,  16px) scale(1.14); opacity: 0.18; }
+  100% { transform: translate(0px,    0px) scale(1.00); opacity: 0.15; }
 }
 
 
@@ -251,9 +241,9 @@ body::after {
   transition: background var(--transition);
 }
 
-.ps-status-dot.ready     { background: var(--status-ready); box-shadow: 0 0 6px var(--status-ready); }
+.ps-status-dot.ready     { background: var(--status-ready); box-shadow: 0 0 3px var(--status-ready); }
 .ps-status-dot.working   { background: var(--status-working); animation: dot-pulse 1s ease-in-out infinite; }
-.ps-status-dot.completed { background: var(--status-completed); box-shadow: 0 0 6px var(--status-completed); }
+.ps-status-dot.completed { background: var(--status-completed); box-shadow: 0 0 3px var(--status-completed); }
 .ps-status-dot.error     { background: var(--status-error); }
 
 @keyframes dot-pulse {
@@ -364,7 +354,7 @@ body::after {
   height: 92px;
   object-fit: contain;
   display: block;
-  filter: drop-shadow(0 0 22px rgba(56, 189, 248, 0.75)) drop-shadow(0 6px 22px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.06)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
   animation: logo-idle-float 3.5s ease-in-out infinite;
 }
 
@@ -374,7 +364,7 @@ body::after {
   }
   50% {
     transform: translateY(-5px) scale(1.04);
-    filter: drop-shadow(0 0 30px rgba(56, 189, 248, 0.92)) drop-shadow(0 8px 26px rgba(0, 0, 0, 0.6));
+    filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.08)) drop-shadow(0 3px 8px rgba(0, 0, 0, 0.28));
   }
 }
 
@@ -602,11 +592,11 @@ body::after {
 }
 
 .ps-input-wrap:focus-within {
-  border-color: rgba(56,189,248,0.35);
+  border-color: rgba(56,189,248,0.22);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.10),
     inset 0 2px 8px rgba(0,0,0,0.2),
-    0 0 0 3px rgba(56,189,248,0.07);
+    0 0 0 1.5px rgba(56,189,248,0.04);
 }
 
 .ps-input {

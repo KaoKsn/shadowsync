@@ -256,18 +256,81 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // Backend Client & Communication Layer (Integration Guide)
+  // Backend Client & Communication Layer
+  // Implements the 4-endpoint contract:
+  //   POST /task/start  — once when task begins
+  //   POST /task/step   — after each action
+  //   POST /task/screenshot — when backend requests a screenshot
+  //   POST /task/stop?session_id=... — on cancel
   // Base URL (dev): http://localhost:8000
   // ─────────────────────────────────────────────────────────
 
-  const BASE_URL = 'http://10.35.119.248:8000';
+  const BASE_URL = 'http://172.19.143.248:8000';
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Minimum gap between consecutive backend requests (in milliseconds).
-  // >>> TO REMOVE: Change MIN_REQUEST_GAP_MS to 0, or remove the throttle block in postTurn <<<
+  // >>> TO REMOVE: Change MIN_REQUEST_GAP_MS to 0, or remove the throttle block <<<
   // ─────────────────────────────────────────────────────────────────────────────
   const MIN_REQUEST_GAP_MS = 2000; // 2 seconds minimum gap between requests
   let lastRequestEndTime = 0;
+
+  /**
+   * Normalise a raw backend response (new 4-endpoint schema) into the internal
+   * action shape that sidepanel.js already understands:
+   *
+   *   { type, data_hint, text, direction, reasoning, is_complete, summary }
+   *
+   * New schema response:
+   *   { session_id, status, action: { type, target_id, text, direction, summary }, summary }
+   *
+   * Action type mapping (backend → internal):
+   *   click              → CLICK
+   *   type_text          → TYPE
+   *   scroll             → SCROLL
+   *   request_screenshot → REQUEST_SCREENSHOT  (handled specially in the loop)
+   *   summarize_page     → DONE
+   *   task_complete      → DONE
+   */
+  function normaliseBackendResponse(raw) {
+    if (!raw || typeof raw !== 'object') {
+      throw new Error('Backend returned an invalid response');
+    }
+
+    const action = raw.action || {};
+    const backendType = String(action.type || '').toLowerCase();
+
+    // Map new backend action type names → internal uppercase names
+    const TYPE_MAP = {
+      click:               'CLICK',
+      type_text:           'TYPE',
+      scroll:              'SCROLL',
+      request_screenshot:  'REQUEST_SCREENSHOT',
+      summarize_page:      'DONE',
+      task_complete:       'DONE',
+    };
+
+    const internalType = TYPE_MAP[backendType] || backendType.toUpperCase();
+
+    // status: 'done' | 'failed' → is_complete
+    const backendStatus = String(raw.status || '').toLowerCase();
+    const isComplete = backendStatus === 'done' || internalType === 'DONE';
+    const isFailed   = backendStatus === 'failed';
+
+    return {
+      // Internal fields expected by sidepanel.js
+      type:          internalType,
+      data_hint:     action.target_id != null ? String(action.target_id) : null,
+      element_id:    action.target_id != null ? String(action.target_id) : null,
+      text:          action.text   || raw.summary || null,
+      direction:     action.direction || null,
+      reasoning:     action.summary || null,
+      is_complete:   isComplete,
+      is_failed:     isFailed,
+      summary:       raw.summary   || action.summary || null,
+      // Preserve originals for debugging
+      _raw:          raw,
+    };
+  }
 
   const AgentBackendClient = {
     BASE_URL,
@@ -302,73 +365,37 @@
     },
 
     /**
-     * Sends the current turn payload to the agent backend.
-     * POST /turn
-     *
-     * @param {Object} params
-     * @param {string} params.sessionId
-     * @param {string} params.taskGoal - Used on first call for a session
-     * @param {Array<Object>} params.sanitizedDom
-     * @param {string} params.sanitizedScreenshotB64 - Raw base64, no data: prefix
-     * @returns {Promise<{
-     *   session_id: string,
-     *   type: 'CLICK' | 'TYPE' | 'SCROLL' | 'DONE' | 'USER' | 'NEW_TAB' | 'GO_BACK' | 'GO_FORWARD',
-     *   data_hint: string | null,
-     *   element_id: string | null,
-     *   text: string | null,
-     *   url: string | null,
-     *   reasoning: string | null,
-     *   is_complete: boolean
-     * }>}
+     * Enforces the minimum inter-request gap.
+     * @private
      */
-    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64 }) {
-      if (!sessionId) {
-        throw new Error('postTurn: sessionId is required');
-      }
-
-      // ─────────────────────────────────────────────────────────────────────────
-      // 2-SECOND DELAY BETWEEN REQUESTS
-      // >>> TO REMOVE: Delete or comment out this block, or change MIN_REQUEST_GAP_MS to 0 above <<<
-      // ─────────────────────────────────────────────────────────────────────────
+    async _enforceRequestGap() {
       if (MIN_REQUEST_GAP_MS > 0 && lastRequestEndTime > 0) {
         const elapsed = Date.now() - lastRequestEndTime;
         if (elapsed < MIN_REQUEST_GAP_MS) {
           const waitMs = MIN_REQUEST_GAP_MS - elapsed;
-          console.log(`[PrivSight Client] Waiting ${waitMs}ms to enforce minimum ${MIN_REQUEST_GAP_MS}ms gap between requests...`);
+          console.log(`[PrivSight Client] Waiting ${waitMs}ms to enforce minimum ${MIN_REQUEST_GAP_MS}ms gap...`);
           await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
       }
-      // ─────────────────────────────────────────────────────────────────────────
+    },
 
-      // Ensure screenshot is raw base64 with no data: prefix
-      const cleanB64 = (sanitizedScreenshotB64 || '').replace(
-        /^data:image\/[a-zA-Z+.-]+;base64,/,
-        ''
-      );
+    /**
+     * Internal helper: POST a snapshot payload to a given endpoint.
+     * @private
+     */
+    async _postSnapshot(endpoint, snapshotPayload) {
+      await this._enforceRequestGap();
 
-      // Filter sanitized_dom to strictly include only data_hint and tag
-      const compactDom = (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
-        data_hint: String(el.data_hint !== undefined ? el.data_hint : el.datahint || ''),
-        tag: String(el.tag || 'div'),
-      }));
-
-      const payload = {
-        session_id: String(sessionId),
-        task_goal: String(taskGoal || ''),
-        sanitized_dom: compactDom,
-        sanitized_screenshot_b64: cleanB64,
-      };
-
-      console.log(`[PrivSight Client] POST /turn (session: ${sessionId}, elements: ${payload.sanitized_dom.length})`);
+      console.log(`[PrivSight Client] POST ${endpoint} (session: ${snapshotPayload.session_id}, elements: ${snapshotPayload.snapshot?.elements?.length ?? 0})`);
 
       try {
-        const response = await fetch(`${BASE_URL}/turn`, {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(snapshotPayload),
         });
 
         if (!response.ok) {
@@ -381,20 +408,195 @@
                 : JSON.stringify(errData.detail);
             }
           } catch (_) {}
-          throw new Error(`Backend /turn error: ${errorDetail}`);
+          throw new Error(`Backend ${endpoint} error: ${errorDetail}`);
         }
 
         const data = await response.json();
-        console.log('[PrivSight Client] /turn response:', data);
-        return data;
+        console.log(`[PrivSight Client] ${endpoint} response:`, data);
+        return normaliseBackendResponse(data);
       } finally {
         lastRequestEndTime = Date.now();
       }
     },
 
     /**
-     * Cancels / deletes a session on the backend.
-     * DELETE /session/{session_id}
+     * Build the snapshot object from captured page state.
+     *
+     * @param {string}   sessionId
+     * @param {number}   step             - 0-indexed step counter
+     * @param {Array}    elements         - Richer element array from agent.js capturePage()
+     * @param {Array}    changedSinceLastStep - mark_ids that changed
+     * @param {boolean}  screenshotAvailable
+     * @param {string|null} screenshotB64 - Raw base64, only set for /task/screenshot
+     * @returns {Object}
+     */
+    buildSnapshot(sessionId, step, elements, changedSinceLastStep, screenshotAvailable, screenshotB64) {
+      return {
+        session_id:   String(sessionId),
+        step:         step,
+        elements:     elements,
+        changed_since_last_step: changedSinceLastStep || [],
+        screenshot_available: Boolean(screenshotAvailable),
+        screenshot_b64: screenshotB64 || null,
+      };
+    },
+
+    /**
+     * POST /task/start — call once at the beginning of a new task.
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.task          - The user's task goal
+     * @param {Array}  params.elements      - Viewport elements with mark_id etc.
+     * @param {boolean} params.screenshotAvailable
+     * @returns {Promise<Object>} Normalised action response
+     */
+    async postTaskStart({ sessionId, task, elements, screenshotAvailable }) {
+      if (!sessionId) throw new Error('postTaskStart: sessionId is required');
+
+      const snapshot = this.buildSnapshot(
+        sessionId,
+        0,
+        elements || [],
+        [],
+        screenshotAvailable !== false,
+        null
+      );
+
+      return this._postSnapshot('/task/start', {
+        session_id: String(sessionId),
+        task: String(task || ''),
+        snapshot,
+      });
+    },
+
+    /**
+     * POST /task/step — call after executing an action and the DOM has changed.
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.task
+     * @param {number} params.step
+     * @param {Array}  params.elements
+     * @param {Array}  params.changedSinceLastStep
+     * @param {boolean} params.screenshotAvailable
+     * @returns {Promise<Object>} Normalised action response
+     */
+    async postTaskStep({ sessionId, task, step, elements, changedSinceLastStep, screenshotAvailable }) {
+      if (!sessionId) throw new Error('postTaskStep: sessionId is required');
+
+      const snapshot = this.buildSnapshot(
+        sessionId,
+        step,
+        elements || [],
+        changedSinceLastStep || [],
+        screenshotAvailable !== false,
+        null
+      );
+
+      return this._postSnapshot('/task/step', {
+        session_id: String(sessionId),
+        task: String(task || ''),
+        snapshot,
+      });
+    },
+
+    /**
+     * POST /task/screenshot — call when the backend has requested a screenshot.
+     * DOM has NOT changed; send the same elements list with an empty changed array.
+     * screenshot_b64 is the only place where the raw base64 image is sent.
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.task
+     * @param {number} params.step
+     * @param {Array}  params.elements    - Same elements as the last snapshot
+     * @param {string} params.screenshotB64 - Raw base64, NO data: prefix
+     * @returns {Promise<Object>} Normalised action response
+     */
+    async postTaskScreenshot({ sessionId, task, step, elements, screenshotB64 }) {
+      if (!sessionId) throw new Error('postTaskScreenshot: sessionId is required');
+
+      const cleanB64 = (screenshotB64 || '').replace(
+        /^data:image\/[a-zA-Z+.-]+;base64,/,
+        ''
+      );
+
+      const snapshot = this.buildSnapshot(
+        sessionId,
+        step,
+        elements || [],
+        [],       // changed_since_last_step is empty — DOM didn't change
+        true,
+        cleanB64  // The actual image bytes go here
+      );
+
+      return this._postSnapshot('/task/screenshot', {
+        session_id: String(sessionId),
+        task: String(task || ''),
+        snapshot,
+      });
+    },
+
+    /**
+     * Sends the current turn payload to the agent backend.
+     * This is a compatibility shim kept so existing call-sites in sidepanel.js
+     * continue to work during the transition period.  New code should call
+     * postTaskStart / postTaskStep / postTaskScreenshot directly.
+     *
+     * POST /task/start  (first turn, step === 0)
+     * POST /task/step   (subsequent turns)
+     *
+     * @param {Object} params
+     * @param {string} params.sessionId
+     * @param {string} params.taskGoal
+     * @param {Array}  params.sanitizedDom  - Array of {data_hint, tag, ...} from agent.js
+     * @param {string} params.sanitizedScreenshotB64
+     * @param {number} [params.step]        - 0-indexed step counter (0 = first call)
+     * @param {Array}  [params.changedSinceLastStep]
+     * @returns {Promise<Object>} Normalised action response
+     */
+    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64, step, changedSinceLastStep }) {
+      if (!sessionId) {
+        throw new Error('postTurn: sessionId is required');
+      }
+
+      // Convert agent.js element format → new backend element format
+      const elements = (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
+        mark_id:          el.mark_id != null ? Number(el.mark_id) : Number(el.data_hint || 0),
+        tag:              String(el.tag || 'div'),
+        role:             el.role || null,
+        text:             el.text != null ? el.text : null,
+        value:            el.value != null ? el.value : null,
+        redacted:         Boolean(el.redacted),
+        redaction_reason: el.redaction_reason || undefined,
+      }));
+
+      const stepIndex = typeof step === 'number' ? step : 0;
+
+      if (stepIndex === 0) {
+        return this.postTaskStart({
+          sessionId,
+          task: taskGoal || '',
+          elements,
+          screenshotAvailable: true,
+        });
+      } else {
+        return this.postTaskStep({
+          sessionId,
+          task: taskGoal || '',
+          step: stepIndex,
+          elements,
+          changedSinceLastStep: changedSinceLastStep || [],
+          screenshotAvailable: true,
+        });
+      }
+    },
+
+    /**
+     * Stops an active session on the backend.
+     * POST /task/stop?session_id=...
+     * (No body needed.)
      *
      * @param {string} sessionId
      * @returns {Promise<Object>}
@@ -402,19 +604,22 @@
     async deleteSession(sessionId) {
       if (!sessionId) return { status: 'skipped' };
       try {
-        const response = await fetch(`${BASE_URL}/session/${encodeURIComponent(sessionId)}`, {
-          method: 'DELETE',
+        const url = `${BASE_URL}/task/stop?session_id=${encodeURIComponent(sessionId)}`;
+        const response = await fetch(url, {
+          method: 'POST',
           headers: { Accept: 'application/json' },
         });
         if (response.status === 404) {
           return { status: 'not_found' };
         }
         if (!response.ok) {
-          throw new Error(`DELETE /session returned HTTP ${response.status}`);
+          throw new Error(`POST /task/stop returned HTTP ${response.status}`);
         }
-        return await response.json();
+        // Response body may be empty
+        const text = await response.text();
+        return text ? JSON.parse(text) : { status: 'stopped' };
       } catch (err) {
-        console.warn(`[PrivSight Client] DELETE /session/${sessionId} notice:`, err.message);
+        console.warn(`[PrivSight Client] POST /task/stop (${sessionId}) notice:`, err.message);
         return { status: 'error', error: err.message };
       }
     },
