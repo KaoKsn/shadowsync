@@ -670,7 +670,7 @@
 
         const turnPayload = {
           sessionId,
-          taskGoal: turnCount === 0 ? taskGoal : '', // only used on first turn
+          taskGoal: taskGoal,
           sanitizedDom: capturedState.sanitized_dom || [],
           sanitizedScreenshotB64: capturedState.sanitized_screenshot_b64 || '',
           step: stepCount,
@@ -895,8 +895,8 @@
       }
 
       console.error('[PrivSight Loop] Execution failed:', error);
-      const msg = error.message?.includes('Failed to fetch')
-        ? 'Could not connect to backend at http://localhost:8000. Please ensure the agent backend server is running and accessible.'
+      const msg = error.message?.includes('Failed to fetch') || error.message?.includes('WebSocket')
+        ? 'Could not connect to backend at ws://localhost:8001/ws/task. Please ensure the WebSocket backend server is running.'
         : `Agent error: ${error.message}`;
 
       addMessage('agent', `❌ ${msg}`);

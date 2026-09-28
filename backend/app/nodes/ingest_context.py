@@ -15,6 +15,11 @@ def ingest_context(state: AgentState) -> AgentState:
         task_goal=state["task_goal"],
     )
 
+    if not state.get("task_goal") and session.task_goal:
+        state["task_goal"] = session.task_goal
+    elif state.get("task_goal") and not session.task_goal:
+        session.task_goal = state["task_goal"]
+
     state["action_history"] = session.action_history
     state["proposed_action"] = None
     state["token_usage_total"] = 0

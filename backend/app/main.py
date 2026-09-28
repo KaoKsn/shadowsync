@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
@@ -90,10 +90,14 @@ def take_turn(req: TurnRequest):
     """
     token_usage_total = 0
     try:
+        task_goal = req.task_goal
+        if not task_goal and req.session_id in store._sessions:
+            task_goal = store._sessions[req.session_id].task_goal
+
         screenshot_path = _save_sanitized_screenshot(req.session_id, req.sanitized_screenshot_b64)
         initial_state = {
             "session_id": req.session_id,
-            "task_goal": req.task_goal,
+            "task_goal": task_goal,
             "sanitized_dom": [el.model_dump() for el in req.sanitized_dom],
             "sanitized_screenshot_b64": req.sanitized_screenshot_b64,
         }
@@ -101,7 +105,7 @@ def take_turn(req: TurnRequest):
         logger.info(
             "take_turn session_id=%s task_goal=%s sanitized_dom_len=%s screenshot_path=%s",
             req.session_id,
-            req.task_goal,
+            task_goal,
             len(req.sanitized_dom),
             screenshot_path,
         )
@@ -164,3 +168,9 @@ def end_session(session_id: str):
     except Exception as exc:
         logger.exception("Failed to end session_id=%s", session_id)
         raise HTTPException(status_code=500, detail="Failed to end session") from exc
+
+
+@app.websocket("/ws/task")
+async def ws_task(websocket: WebSocket):
+    from app.websocket_main import handle_websocket_task
+    await handle_websocket_task(websocket)

@@ -44,6 +44,8 @@ def _format_element(el: dict) -> str:
         parts.append(f'role={el["role"]}')
     if el.get("type"):
         parts.append(f'type={el["type"]}')
+    if el.get("text"):
+        parts.append(f'text={el["text"]}')
     if el.get("value"):
         parts.append(f'value={el["value"]}')
     if el.get("aria_label"):
