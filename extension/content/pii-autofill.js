@@ -54,12 +54,16 @@
   const ownValues = new WeakMap();
   let scheduled = false;
   const pendingRoots = new Set();
+  let missingInfoNoticeShown = false;
 
   function normalize(value) {
     return String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
   }
 
   function configValue(key) {
+    // Keep these student-specific fields bound to the education profile so a
+    // similarly named financial/other field can never supply their values.
+    if (key === 'studentId') return CONFIG.education?.studentId || '';
     if (key === 'educationBranch') return CONFIG.education?.branch || '';
     for (const group of Object.values(CONFIG)) {
       if (group && Object.prototype.hasOwnProperty.call(group, key)) return group[key];
@@ -68,19 +72,28 @@
   }
 
   function metadata(field) {
-    const ownParts = [field.name, field.id, field.type, field.placeholder, field.getAttribute('aria-label'), field.autocomplete];
-    if (field.labels) ownParts.push(...Array.from(field.labels, label => label.innerText || label.textContent));
+    // Keep autocomplete and input type separate so neither can override a conflicting label.
+    const ownParts = [field.name, field.id, field.placeholder, field.getAttribute('aria-label')];
+    const labels = [];
+    if (field.labels) labels.push(...Array.from(field.labels, label => label.innerText || label.textContent));
+    const labelledBy = field.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      labelledBy.split(/\s+/).forEach(id => {
+        const label = field.ownerDocument.getElementById(id);
+        if (label) labels.push(label.innerText || label.textContent);
+      });
+    }
     if (!field.labels?.length && field.id) {
       try {
         const label = field.ownerDocument.querySelector(`label[for="${CSS.escape(field.id)}"]`);
-        if (label) ownParts.push(label.innerText || label.textContent);
+        if (label) labels.push(label.innerText || label.textContent);
       } catch (_) {}
     }
-    const parent = field.closest('label') || field.parentElement;
+    if (field.closest('label')) labels.push(field.closest('label').innerText || field.closest('label').textContent);
     return {
       text: normalize(ownParts.join(' ')),
-      context: normalize(parent?.innerText || parent?.textContent || ''),
-      forbiddenText: normalize(ownParts.join(' ')),
+      labelText: normalize(labels.join(' ')),
+      forbiddenText: normalize([ownParts.join(' '), labels.join(' '), field.type].join(' ')),
       autocomplete: normalize(field.autocomplete).split(' ').pop(),
     };
   }
@@ -89,31 +102,41 @@
     const meta = metadata(field);
     if (FORBIDDEN.test(meta.forbiddenText)) return null;
     if (/\bpin\b/.test(meta.text) && !/\b(?:postal|zip|post code|pincode)\b/.test(meta.text)) return null;
+    function bestMatch(text) {
+      const candidates = [];
+      for (const [key, terms] of Object.entries(FIELD_MAPPINGS)) {
+        for (const term of terms) {
+          const normalizedTerm = normalize(term);
+          if (normalizedTerm && (` ${text} `).includes(` ${normalizedTerm} `)) candidates.push({ key, score: normalizedTerm.length });
+        }
+      }
+      candidates.sort((a, b) => b.score - a.score);
+      const ambiguous = candidates.length > 1 && candidates[0].score === candidates[1].score && candidates[0].key !== candidates[1].key;
+      return { key: candidates.length && !ambiguous ? candidates[0].key : null, ambiguous };
+    }
+
+    // Explicit labels are strongest. Identifiers like i39 only participate if
+    // they contain a recognized field term. Avoid broad parent text: a form
+    // container often includes labels for several unrelated inputs.
+    const labelMatch = bestMatch(meta.labelText);
+    const ownMatch = bestMatch(meta.text);
+    const localMatch = labelMatch.key ? labelMatch : ownMatch;
+    const semanticKey = localMatch.key;
     const autoKey = AUTOCOMPLETE_MAPPING[meta.autocomplete];
-    if (autoKey) return autoKey;
-    const text = meta.text;
-    // Prefer narrow/multiword matches to prevent e.g. "name" winning over "company name".
-    const candidates = [];
-    for (const [key, terms] of Object.entries(FIELD_MAPPINGS)) {
-      for (const term of terms) {
-        const normalizedTerm = normalize(term);
-        if (normalizedTerm && (` ${text} `).includes(` ${normalizedTerm} `)) candidates.push({ key, score: normalizedTerm.length });
-      }
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    if (candidates.length && !(candidates.length > 1 && candidates[0].score === candidates[1].score && candidates[0].key !== candidates[1].key)) return candidates[0].key;
-    // Use broad container text only as a fallback, and only if it identifies one mapping.
-    if (candidates.length) return null;
-    const contextual = [];
-    for (const [key, terms] of Object.entries(FIELD_MAPPINGS)) {
-      for (const term of terms) {
-        const normalizedTerm = normalize(term);
-        if (normalizedTerm && (` ${meta.context} `).includes(` ${normalizedTerm} `)) contextual.push({ key, score: normalizedTerm.length });
-      }
-    }
-    contextual.sort((a, b) => b.score - a.score);
-    if (!contextual.length || (contextual.length > 1 && contextual[0].score === contextual[1].score && contextual[0].key !== contextual[1].key)) return null;
-    return contextual[0].key;
+
+    // A semantic label/identifier that disagrees with autocomplete is unsafe.
+    // Do not let stale or incorrect autocomplete metadata fill the wrong PII.
+    if (semanticKey && autoKey && semanticKey !== autoKey) return null;
+    if (semanticKey) return semanticKey;
+    if (localMatch.ambiguous) return null;
+    // Google Forms and similar builders use opaque IDs such as i39. Their
+    // autocomplete metadata can be stale or generic, so it is not enough to
+    // safely identify a field without a label.
+    const opaqueId = /^(?:i\d+|entry[._-]?\d+|field[._-]?\d+)$/i;
+    if (autoKey && [field.name, field.id].some(value => value && opaqueId.test(value.trim()))) return null;
+    // Input type alone (for example type=email) is not enough evidence to
+    // fill. A recognized autocomplete token can still identify unlabelled fields.
+    return autoKey || null;
   }
 
   function isEligible(field) {
@@ -155,6 +178,31 @@
     }
   }
 
+  function showMissingInfoNotice() {
+    if (missingInfoNoticeShown || !document.documentElement) return;
+    missingInfoNoticeShown = true;
+
+    const host = document.createElement('div');
+    host.setAttribute('aria-live', 'polite');
+    host.setAttribute('role', 'status');
+    Object.assign(host.style, {
+      position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+      zIndex: '2147483647', pointerEvents: 'none',
+    });
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const notice = document.createElement('div');
+    notice.textContent = "Some fields were left blank because that information isn't in your local profile. PrivSight only fills information you've provided.";
+    Object.assign(notice.style, {
+      maxWidth: 'min(520px, calc(100vw - 32px))', padding: '12px 16px',
+      borderRadius: '10px', background: '#172033', color: '#f8fafc',
+      border: '1px solid #475569', boxShadow: '0 8px 28px rgba(0,0,0,.28)',
+      font: '500 13px/1.45 system-ui, sans-serif', textAlign: 'center',
+    });
+    shadow.appendChild(notice);
+    document.documentElement.appendChild(host);
+    setTimeout(() => host.remove(), 6500);
+  }
+
   function process(field) {
     if (FILLED.has(field)) return;
     if (!isEligible(field)) return;
@@ -163,7 +211,10 @@
     if (!mapping) return;
     let value = configValue(mapping);
     // `country` autocomplete is a name in some forms; country-name can use the same config.
-    if (typeof value !== 'string' || !value.trim()) return;
+    if (typeof value !== 'string' || !value.trim()) {
+      showMissingInfoNotice();
+      return;
+    }
     if (field instanceof HTMLInputElement && field.type === 'radio') {
       const radios = Array.from((field.form || document).querySelectorAll('input[type="radio"]'))
         .filter(radio => field.name ? radio.name === field.name : radio === field);
