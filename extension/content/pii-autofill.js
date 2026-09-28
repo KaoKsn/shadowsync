@@ -7,7 +7,7 @@
   if (!AUTOFILL_ENABLED || !CONFIG || globalThis.PrivSightPIIAutofill) return;
 
   const FIELD_MAPPINGS = {
-    fullName: ['full name', 'fullname', 'your name', 'legal name', 'name'],
+    fullName: ['name of the student', 'student name', 'full name', 'fullname', 'your name', 'legal name', 'name'],
     firstName: ['first name', 'firstname', 'given name', 'givenname', 'forename'],
     middleName: ['middle name', 'middlename'],
     lastName: ['last name', 'lastname', 'surname', 'family name'],
@@ -29,9 +29,10 @@
     drivingLicence: ['driving licence', 'driving license', 'licence number', 'license number'],
     voterId: ['voter id', 'voter identification'], bankAccount: ['bank account number', 'bank account', 'account number'],
     ifsc: ['ifsc code', 'ifsc'], bankName: ['bank name'], branch: ['bank branch'], upiId: ['upi address', 'upi id', 'upi'],
-    studentId: ['student registration number', 'student number', 'student id'],
+    studentId: ['university seat number', 'usn', 'student registration number', 'student number', 'student id'],
     registrationNumber: ['registration number'], college: ['college', 'university', 'institution'],
-    course: ['course', 'degree program'], educationBranch: ['academic branch', 'branch', 'stream'], semester: ['semester'],
+    course: ['course', 'degree program'], educationBranch: ['academic branch', 'branch', 'stream'],
+    year: ['year of study', 'student year', 'year'], semester: ['semester'],
     graduationYear: ['graduation year', 'year of graduation'], company: ['company', 'organization', 'organisation', 'employer'],
     jobTitle: ['job title', 'designation', 'position', 'job role'], department: ['department'], employeeId: ['employee id'],
     workEmail: ['work email', 'business email'], workPhone: ['work phone', 'business phone'],
@@ -117,11 +118,11 @@
 
   function isEligible(field) {
     if (!(field instanceof HTMLElement) || field.disabled || field.readOnly || field.getAttribute('aria-disabled') === 'true') return false;
-    if (field instanceof HTMLInputElement && !['text', 'email', 'tel', 'date', 'number', 'search', 'url'].includes(field.type)) return false;
+    if (field instanceof HTMLInputElement && !['text', 'email', 'tel', 'date', 'number', 'search', 'url', 'radio'].includes(field.type)) return false;
     if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) return false;
     if (field instanceof HTMLSelectElement && field.multiple) return false;
     if (field.getAttribute('aria-hidden') === 'true' || field.closest('[aria-hidden="true"],[hidden]')) return false;
-    if (field.value && field.value.trim() && field.value !== ownValues.get(field)) return false;
+    if (field.type !== 'radio' && field.value && field.value.trim() && field.value !== ownValues.get(field)) return false;
     return true;
   }
 
@@ -163,6 +164,24 @@
     let value = configValue(mapping);
     // `country` autocomplete is a name in some forms; country-name can use the same config.
     if (typeof value !== 'string' || !value.trim()) return;
+    if (field instanceof HTMLInputElement && field.type === 'radio') {
+      const radios = Array.from((field.form || document).querySelectorAll('input[type="radio"]'))
+        .filter(radio => field.name ? radio.name === field.name : radio === field);
+      if (radios.some(radio => radio.checked)) return;
+      const wanted = normalize(value);
+      const match = radios.find(radio => {
+        const label = radio.labels?.[0];
+        return normalize(radio.value) === wanted || normalize(label?.innerText || label?.textContent) === wanted;
+      });
+      if (!match) return;
+      match.checked = true;
+      ownValues.set(match, match.value);
+      FILLED.add(match);
+      match.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      match.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      console.info(`[PrivSight Autofill] filled ${mapping} (radio)`);
+      return;
+    }
     if (field.type === 'date' || mapping === 'dateOfBirth') value = formatDate(value, field);
     if (field instanceof HTMLSelectElement) {
       value = optionValue(field, value);

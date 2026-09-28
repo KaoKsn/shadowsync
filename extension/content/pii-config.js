@@ -26,7 +26,7 @@
     financial: { bankAccount: '', ifsc: '', bankName: '', branch: '', upiId: '' },
     education: {
       college: 'Example College', university: '', studentId: '', registrationNumber: '',
-      course: 'Example Course', branch: '', semester: '', graduationYear: '',
+      course: 'Example Course', branch: '', year: '', semester: '', graduationYear: '',
     },
     professional: {
       company: '', jobTitle: '', department: '', employeeId: '', workEmail: '', workPhone: '',
