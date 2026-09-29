@@ -4,11 +4,7 @@ from pydantic import BaseModel
 
 
 class ElementSnapshot(BaseModel):
-    """One DOM element. The extension only sends elements currently
-    visible in the viewport -- nothing off-screen is included, by design
-    (keeps token usage down and matches what a human would actually see)."""
-
-    id: int
+    mark_id: int          # was: id
     tag: str
     role: Optional[str] = None
     input_type: Optional[str] = None
@@ -41,6 +37,7 @@ class AgentAction(BaseModel):
         "type_text",
         "scroll",
         "request_screenshot",
+        "request_user_input",
         "summarize_page",
         "task_complete",
     ]
@@ -48,6 +45,7 @@ class AgentAction(BaseModel):
     text: Optional[str] = None
     direction: Optional[Literal["up", "down"]] = None
     summary: Optional[str] = None
+    message: Optional[str] = None
 
 
 class AgentResponse(BaseModel):

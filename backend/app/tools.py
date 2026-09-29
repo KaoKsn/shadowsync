@@ -60,10 +60,38 @@ TOOLS = [
             "description": (
                 "Request a redacted screenshot when the visible DOM elements "
                 "genuinely aren't enough to decide the next action (e.g. "
-                "icon-only controls, ambiguous layout). Costs an extra round "
-                "trip -- don't use speculatively."
+                "icon-only controls, ambiguous layout). The returned "
+                "screenshot is paired with the same numbered DOM payload, "
+                "so the model can map what it sees back to the element ids. "
+                "Costs an extra round trip -- don't use speculatively."
             ),
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_user_input",
+            "description": (
+                "Use when the page becomes a login, signup, verification, "
+                "account-creation, consent, or other PII-sensitive form that "
+                "cannot be completed safely from DOM context alone. Ask the "
+                "frontend to pause the agent and prompt the human user to "
+                "enter the required information locally, then continue after "
+                "the form is submitted and a fresh snapshot is sent back. Do "
+                "not guess or fabricate passwords, OTPs, emails, phone "
+                "numbers, addresses, or other sensitive values."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Short instruction for the frontend to show the user.",
+                    }
+                },
+                "required": ["message"],
+            },
         },
     },
     {
@@ -97,18 +125,11 @@ TOOLS = [
 
 
 def render_snapshot_for_prompt(snapshot) -> str:
-    """Renders the current snapshot's elements for the prompt.
-
-    The extension is responsible for filtering to viewport-visible
-    elements before sending -- this function trusts that filter and just
-    formats what it's given. If you ever see off-screen elements leaking
-    through here, the bug is in the extension's scan stage, not here.
-    """
     lines = []
     for el in snapshot.elements:
         value = f"[REDACTED:{el.redaction_reason}]" if el.redacted else (el.value or "-")
         lines.append(
-            f"[{el.id}] <{el.tag}> role={el.role or '-'} "
+            f"[{el.mark_id}] <{el.tag}> role={el.role or '-'} "   # was: el.id
             f"text={el.text or '-'} value={value}"
         )
     return "\n".join(lines) if lines else "(no visible elements)"
