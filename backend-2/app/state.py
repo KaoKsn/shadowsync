@@ -1,17 +1,45 @@
 from typing import Literal, Optional, TypedDict
 
-from .schemas import ClientSnapshot
 
-class AgentState(TypedDict):
+class PlanStep(TypedDict):
+    goal: str
+    done_when: str
+
+
+class AgentState(TypedDict, total=False):
+    """Everything here is checkpointed to Redis on every super-step, so it is
+    kept deliberately small. Screenshots and page text never live here --
+    they travel through config["configurable"] for a single invoke."""
+
     session_id: str
     task: str
-    plan: list[str]
-    current_step: int
-    total_steps: int
-    snapshot: Optional[ClientSnapshot]
-    action_journal: list[str]
-    pending_action: Optional[dict]
-    retry_count: int
     status: Literal["running", "done", "failed"]
-    last_result_summary: Optional[str]
-    resume_reason: Optional[str]   # "action_result" | "screenshot_result" | None
+
+    # Latest client input, set by the API layer before each invoke.
+    snapshot: Optional[dict]
+    incoming: Literal["start", "step", "screenshot", "page_text"]
+
+    plan: list[PlanStep]
+    plan_idx: int
+    start_url: Optional[str]
+    memory: list[str]
+    journal: list[str]
+
+    url: str
+    title: str
+    elements: list[dict]      # compact: {id, line, labeled}
+    page_sig: str
+    screenshot_available: bool
+
+    last_action: Optional[dict]      # {type, submit, desc, url, page_sig} awaiting an outcome
+    recent_fps: list[str]            # page_sig|action, for loop detection
+    stuck_level: int                 # consecutive actions with no visible effect
+
+    screenshot_sigs: list[str]
+    screenshots_used: int
+    replan_count: int
+    total_steps: int
+
+    pending_action: Optional[dict]
+    summary: Optional[str]
+    usage: dict

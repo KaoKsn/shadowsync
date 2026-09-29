@@ -1,43 +1,46 @@
-# Backend scaffold -- privacy-preserving browser agent (SIH PS 26171)
+# PrivSight backend -- privacy-preserving browser agent
 
 ## Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/Scripts/activate      # Windows Git Bash; .venv/bin/activate elsewhere
 pip install -r requirements.txt
-cp .env.example .env   # fill in OPENAI_API_KEY, point REDIS_URL at your Redis
-uvicorn app.main:app --reload --port 8000
+cp .env.example .env               # fill in OPENAI_API_KEY
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Redis must be running -- but plain `redis` won't work, `langgraph-checkpoint-redis`
-needs the RedisJSON and RediSearch modules. Use Redis Stack:
+Redis is optional but recommended. `langgraph-checkpoint-redis` needs the
+RedisJSON + RediSearch modules, so use Redis Stack:
 
 ```bash
-docker run -d --name sih-redis -p 6379:6379 redis/redis-stack-server:latest
+docker run -d --name privsight-redis -p 6379:6379 redis/redis-stack-server:latest
 ```
 
-Point `REDIS_URL` at it (default in `.env.example` already matches).
+If Redis is unreachable (or `USE_REDIS=0`) the server logs a warning and uses
+an in-memory checkpointer. `GET /health` shows which one is active.
 
-## Flow
+Tests (fake LLM, no network): `pip install pytest && python -m pytest tests -q`
 
-`POST /task/start` with `{session_id, task, snapshot}` kicks off a task.
-Every subsequent extension update (after executing an action, or after
-capturing a requested screenshot) goes to `POST /task/step` with
-`{session_id, task, snapshot}` -- the response always contains exactly
-one action for the extension to execute next, or a terminal
-`status: "done" | "failed"` with a `summary`.
+## How it works
 
-## Known things to verify before the demo, not just trust from this scaffold
+The extension talks to `ws://<host>:8000/ws/task` (protocol in
+[WEBSOCKET_API.md](WEBSOCKET_API.md)). Every message runs the LangGraph once
+(thread = `session_id`, state checkpointed in Redis) and returns exactly one
+action.
 
-- `dispatch_action -> END` + re-invoke-by-thread_id is the simplest
-  pause/resume pattern, but confirm it actually resumes correctly against
-  the exact `langgraph` + `langgraph-checkpoint-redis` versions you end
-  up pinning -- checkpoint/resume semantics have shifted across releases.
-- `verify`'s "did the diff match" logic is intentionally simple (rule-based)
-  for now -- if it's too trigger-happy on retries/replans, that's the
-  first thing to make smarter (e.g. LLM-escalate only on ambiguous diffs).
-- Nothing here validates that elements the model references by id
-  actually exist in the current snapshot -- add that guard before
-  wiring up the real extension, so a hallucinated id doesn't crash
-  `dispatch_action`.
+| Node | LLM | Role |
+|---|---|---|
+| `observe` | -- | Compacts the DOM, computes a page signature, judges the last action's outcome (navigated / page updated / no change), tracks "stuck" level. |
+| `planner` | nano | Once per task: 1-5 subgoals, optional `start_url` (emitted directly as `open_url`). |
+| `actor` | mini | One tool call per step. Also marks subgoals done and saves notes. |
+| `reader` | nano | Turns `read_page` text into short notes, or a final answer. |
+| `replanner` | nano | Only after 3 no-progress actions; max `MAX_REPLANS`, then fails cleanly. |
+| `request_vision` | -- | Vision gate: asks for a screenshot on icon-only/near-empty pages or at stuck level 2, once per page state. |
+
+### Token budget
+- Static system prompt + tools first, per-turn data last, so OpenAI's prompt caching applies.
+- Compact element lines (`12 a "Sign in"`), unlabeled icons collapsed, labels clipped.
+- Screenshots: only on request, used for one call, downscaled to 768px JPEG and never checkpointed.
+- Page text goes to the cheap reader; the actor only sees its notes.
+- Per-call usage is appended to `logs/usage.jsonl` (`node`, `prompt`, `completion`, `cached`, `image`).

@@ -1,135 +1,79 @@
-"""OpenAI tool/function definitions used by the `act` node, plus the
-prompt-rendering helper for the current snapshot.
+"""Tool definitions for the actor. The list is static (never reordered or
+templated) so it sits in the cacheable prompt prefix."""
 
-Every action the model can take is a tool call with a strict schema --
-nothing here is parsed out of free text. That's deliberate: it's the
-fix for logic living outside the graph in a way nobody can trace.
-"""
+# Shared bookkeeping args attached to every action tool.
+_COMMON = {
+    "reason": {"type": "string", "description": "Why, in at most 12 words."},
+    "note": {
+        "type": "string",
+        "description": "Optional fact worth remembering for later steps (e.g. a value found on the page).",
+    },
+    "subgoal_done": {
+        "type": "boolean",
+        "description": "True if the CURRENT subgoal is already satisfied by the page you see now.",
+    },
+}
+
+
+def _tool(name: str, description: str, props: dict | None = None, required: list[str] | None = None) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": {**(props or {}), **_COMMON},
+                "required": [*(required or []), "reason"],
+            },
+        },
+    }
+
 
 TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "click",
-            "description": "Click an interactive element identified by its id.",
-            "parameters": {
-                "type": "object",
-                "properties": {"target_id": {"type": "integer"}},
-                "required": ["target_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "type_text",
-            "description": "Type text into an input/textarea identified by its id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "target_id": {"type": "integer"},
-                    "text": {"type": "string"},
-                },
-                "required": ["target_id", "text"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "scroll",
-            "description": (
-                "Scroll the page. Use this to reveal elements that are not "
-                "currently in the viewport -- you only ever see visible "
-                "elements, so scroll rather than assuming something exists "
-                "off-screen."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "direction": {"type": "string", "enum": ["up", "down"]}
-                },
-                "required": ["direction"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "request_screenshot",
-            "description": (
-                "Request a redacted screenshot when the visible DOM elements "
-                "genuinely aren't enough to decide the next action (e.g. "
-                "icon-only controls, ambiguous layout). The returned "
-                "screenshot is paired with the same numbered DOM payload, "
-                "so the model can map what it sees back to the element ids. "
-                "Costs an extra round trip -- don't use speculatively."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "request_user_input",
-            "description": (
-                "Use when the page becomes a login, signup, verification, "
-                "account-creation, consent, or other PII-sensitive form that "
-                "cannot be completed safely from DOM context alone. Ask the "
-                "frontend to pause the agent and prompt the human user to "
-                "enter the required information locally, then continue after "
-                "the form is submitted and a fresh snapshot is sent back. Do "
-                "not guess or fabricate passwords, OTPs, emails, phone "
-                "numbers, addresses, or other sensitive values."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Short instruction for the frontend to show the user.",
-                    }
-                },
-                "required": ["message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "summarize_page",
-            "description": (
-                "Use when the task is to summarize/describe the current "
-                "page rather than perform an action on it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"summary": {"type": "string"}},
-                "required": ["summary"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "task_complete",
-            "description": "Call when the original task has been fully accomplished.",
-            "parameters": {
-                "type": "object",
-                "properties": {"summary": {"type": "string"}},
-                "required": ["summary"],
-            },
-        },
-    },
+    _tool("click", "Click an element by its id.", {"target_id": {"type": "integer"}}, ["target_id"]),
+    _tool(
+        "type_text",
+        "Replace the content of an input/textarea by id. Set submit=true to press Enter afterwards (e.g. search boxes).",
+        {"target_id": {"type": "integer"}, "text": {"type": "string"}, "submit": {"type": "boolean"}},
+        ["target_id", "text"],
+    ),
+    _tool(
+        "scroll",
+        "Scroll one viewport. Only visible elements are listed, so scroll to find things off-screen.",
+        {"direction": {"type": "string", "enum": ["up", "down"]}},
+        ["direction"],
+    ),
+    _tool(
+        "open_url",
+        "Navigate the current tab to a URL. Prefer this over clicking through menus when you know the site.",
+        {"url": {"type": "string"}},
+        ["url"],
+    ),
+    _tool("go_back", "Go back to the previous page in history."),
+    _tool(
+        "read_page",
+        "Fetch the page's visible text (redacted). Use to read articles, results, prices, or to answer/summarize. "
+        "Much cheaper than a screenshot for text.",
+    ),
+    _tool(
+        "request_screenshot",
+        "Ask for a screenshot of the viewport with numbered badges matching element ids. Only when the element "
+        "list is ambiguous (icon-only controls, canvas, visual layout). At most once per page state.",
+    ),
+    _tool(
+        "request_user_input",
+        "Pause and let the human fill a login, signup, OTP, payment, consent or other PII form themselves. "
+        "Never invent passwords, OTPs, emails, phone numbers or addresses.",
+        {"message": {"type": "string", "description": "Short instruction shown to the user."}},
+        ["message"],
+    ),
+    _tool(
+        "task_complete",
+        "Finish. Put the answer or a short result summary in `summary`. success=false if the task is impossible.",
+        {"summary": {"type": "string"}, "success": {"type": "boolean"}},
+        ["summary"],
+    ),
 ]
 
-
-def render_snapshot_for_prompt(snapshot) -> str:
-    lines = []
-    for el in snapshot.elements:
-        value = f"[REDACTED:{el.redaction_reason}]" if el.redacted else (el.value or "-")
-        lines.append(
-            f"[{el.mark_id}] <{el.tag}> role={el.role or '-'} "   # was: el.id
-            f"text={el.text or '-'} value={value}"
-        )
-    return "\n".join(lines) if lines else "(no visible elements)"
+ACTION_TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
