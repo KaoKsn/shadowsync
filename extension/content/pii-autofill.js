@@ -6,9 +6,16 @@
   'use strict';
 
   const AUTOFILL_ENABLED = true;
-  const CONFIG = globalThis.PrivSightPIIConfig;
+  const SCHEMA = globalThis.PrivSightPIISchema;
 
-  if (!AUTOFILL_ENABLED || !CONFIG || globalThis.PrivSightPIIAutofill) return;
+  if (!AUTOFILL_ENABLED || !SCHEMA || globalThis.PrivSightPIIAutofill) return;
+
+  const STORAGE_KEYS = SCHEMA.storageKeys;
+  const SENSITIVE = new Set(SCHEMA.sensitiveKeys);
+
+  // Loaded from chrome.storage.local; empty until the user fills in their profile.
+  let profile = {};
+  let settings = { ...SCHEMA.defaultSettings };
 
   const FIELD_MAPPINGS = {
     fullName: [
@@ -351,7 +358,7 @@
 
   let scheduled = false;
   const pendingRoots = new Set();
-  let missingInfoNoticeShown = false;
+  const shownNotices = new Set();
   let observer = null;
   let pausedForHumanInput = false;
 
@@ -365,24 +372,35 @@
   }
 
   function configValue(key) {
-    if (key === 'studentId') {
-      return CONFIG.education?.studentId || '';
-    }
+    const value = profile[key];
+    return typeof value === 'string' ? value : '';
+  }
 
-    if (key === 'educationBranch') {
-      return CONFIG.education?.branch || '';
-    }
+  function hasAnyProfileValue() {
+    return Object.values(profile).some(
+      value => typeof value === 'string' && value.trim()
+    );
+  }
 
-    for (const group of Object.values(CONFIG)) {
-      if (
-        group &&
-        Object.prototype.hasOwnProperty.call(group, key)
-      ) {
-        return group[key];
-      }
-    }
+  function sensitiveAllowedHere() {
+    return settings.sensitiveSites.includes(location.origin);
+  }
 
-    return '';
+  function applyStored(items) {
+    const storedProfile = items?.[STORAGE_KEYS.profile];
+    const storedSettings = items?.[STORAGE_KEYS.settings];
+
+    profile =
+      storedProfile && typeof storedProfile === 'object'
+        ? storedProfile
+        : {};
+
+    settings = {
+      enabled: storedSettings?.enabled !== false,
+      sensitiveSites: Array.isArray(storedSettings?.sensitiveSites)
+        ? storedSettings.sensitiveSites
+        : []
+    };
   }
 
   function metadata(field) {
@@ -570,7 +588,7 @@
   }
 
   function isEligible(field) {
-    if (pausedForHumanInput) return false;
+    if (pausedForHumanInput || !settings.enabled) return false;
     if (
       !(field instanceof HTMLElement) ||
       field.disabled ||
@@ -726,15 +744,22 @@
     }
   }
 
-  function showMissingInfoNotice() {
+  const NOTICES = {
+    missing:
+      "Some fields were left blank because that information isn't in your local profile. PrivSight only fills information you've provided.",
+    sensitive:
+      "PrivSight didn't fill ID or bank fields on this site. To allow it, open your autofill profile from the PrivSight side panel."
+  };
+
+  function showNotice(kind) {
     if (
-      missingInfoNoticeShown ||
+      shownNotices.has(kind) ||
       !document.documentElement
     ) {
       return;
     }
 
-    missingInfoNoticeShown = true;
+    shownNotices.add(kind);
 
     const host =
       document.createElement('div');
@@ -766,8 +791,7 @@
     const notice =
       document.createElement('div');
 
-    notice.textContent =
-      "Some fields were left blank because that information isn't in your local profile. PrivSight only fills information you've provided.";
+    notice.textContent = NOTICES[kind];
 
     Object.assign(notice.style, {
       maxWidth:
@@ -821,7 +845,18 @@
       typeof value !== 'string' ||
       !value.trim()
     ) {
-      showMissingInfoNotice();
+      // Don't nag on every form before the user has set up a profile.
+      if (hasAnyProfileValue()) showNotice('missing');
+      return;
+    }
+
+    // Page scripts can read a filled value from input/change events even if
+    // the form is never submitted, so IDs and bank details need site consent.
+    if (
+      SENSITIVE.has(mapping) &&
+      !sensitiveAllowedHere()
+    ) {
+      showNotice('sensitive');
       return;
     }
 
@@ -1116,16 +1151,48 @@
       start
     });
 
-  if (
-    document.readyState ===
-    'loading'
-  ) {
-    document.addEventListener(
-      'DOMContentLoaded',
-      start,
-      { once: true }
+  // Profile edits (or a newly allowed site) apply to open tabs without reload;
+  // scan() retries mapped fields that are still empty.
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (
+      area !== 'local' ||
+      !(STORAGE_KEYS.profile in changes || STORAGE_KEYS.settings in changes)
+    ) {
+      return;
+    }
+
+    chrome.storage.local.get(
+      [STORAGE_KEYS.profile, STORAGE_KEYS.settings],
+      items => {
+        applyStored(items);
+        if (observer) scan(document);
+      }
     );
-  } else {
-    start();
+  });
+
+  function startWhenReady() {
+    if (
+      document.readyState ===
+      'loading'
+    ) {
+      document.addEventListener(
+        'DOMContentLoaded',
+        start,
+        { once: true }
+      );
+    } else {
+      start();
+    }
   }
+
+  if (!chrome.storage?.local) return;
+
+  chrome.storage.local.get(
+    [STORAGE_KEYS.profile, STORAGE_KEYS.settings],
+    items => {
+      if (chrome.runtime.lastError) return;
+      applyStored(items);
+      startWhenReady();
+    }
+  );
 })();

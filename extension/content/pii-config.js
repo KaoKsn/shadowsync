@@ -1,102 +1,144 @@
 /*
- * Local example profile for PrivSight autofill.
- * Replace these fictional values with your own.
- * This file is read only by the content-side autofill module
- * and is never sent to the agent backend.
+ * Autofill profile schema for PrivSight.
+ *
+ * This file only describes WHICH fields exist. The user's actual values are
+ * stored in chrome.storage.local (edited on profile/profile.html), so no
+ * personal data lives in source code or git. Shared by the content-side
+ * autofill module and the profile page. Never sent to the agent backend.
  */
 (() => {
   'use strict';
 
-  const PII_CONFIG = {
-    identity: {
-      fullName: 'Alston PR',
-      firstName: 'Alston',
-      middleName: 'Alston',
-      lastName: 'Alston',
-      preferredName: 'Rahul',
-      dateOfBirth: '2002-07-15',
-      gender: 'Male',
-      nationality: 'Indian',
+  // [key, label, inputType]. Keys must match FIELD_MAPPINGS in pii-autofill.js.
+  const GROUPS = [
+    {
+      id: 'identity',
+      title: 'Identity',
+      fields: [
+        ['fullName', 'Full name'],
+        ['firstName', 'First name'],
+        ['middleName', 'Middle name'],
+        ['lastName', 'Last name'],
+        ['preferredName', 'Preferred name'],
+        ['dateOfBirth', 'Date of birth', 'date'],
+        ['gender', 'Gender'],
+        ['nationality', 'Nationality'],
+      ],
     },
-
-    contact: {
-      email: 'rahul.sharma@example.com',
-      secondaryEmail: 'rahul.test@example.com',
-      phone: '+919876543210',
-      secondaryPhone: '+919812345678',
-      whatsapp: '+919876543210',
+    {
+      id: 'contact',
+      title: 'Contact',
+      fields: [
+        ['email', 'Email', 'email'],
+        ['secondaryEmail', 'Secondary email', 'email'],
+        ['phone', 'Phone', 'tel'],
+        ['secondaryPhone', 'Secondary phone', 'tel'],
+        ['whatsapp', 'WhatsApp', 'tel'],
+      ],
     },
-
-    address: {
-      addressLine1: '42 Example Residency',
-      addressLine2: 'Flat 302',
-      apartment: '302',
-      street: 'Example Main Road',
-      locality: 'Sample Nagar',
-      city: 'Bengaluru',
-      district: 'Bengaluru Urban',
-      state: 'Karnataka',
-      country: 'India',
-      pinCode: '560001',
-      zipCode: '560001',
+    {
+      id: 'address',
+      title: 'Address',
+      fields: [
+        ['addressLine1', 'Address line 1'],
+        ['addressLine2', 'Address line 2'],
+        ['apartment', 'Apartment / unit'],
+        ['street', 'Street'],
+        ['locality', 'Locality / district'],
+        ['city', 'City'],
+        ['state', 'State'],
+        ['country', 'Country'],
+        ['pinCode', 'PIN / postal code'],
+      ],
     },
-
-    government: {
-      aadhaar: '000000000000',
-      pan: 'ABCDE1234F',
-      passportNumber: 'P0000000',
-      passportExpiry: '2032-07-15',
-      drivingLicence: 'KA00 00000000000',
-      voterId: 'ABC0000000',
+    {
+      id: 'government',
+      title: 'Government IDs',
+      sensitive: true,
+      fields: [
+        ['aadhaar', 'Aadhaar number'],
+        ['pan', 'PAN'],
+        ['passportNumber', 'Passport number'],
+        ['passportExpiry', 'Passport expiry', 'date'],
+        ['drivingLicence', 'Driving licence'],
+        ['voterId', 'Voter ID'],
+      ],
     },
-
-    financial: {
-      bankAccount: '000000000000',
-      ifsc: 'TEST0000001',
-      bankName: 'Example Bank',
-      branch: 'Bengaluru Main Branch',
-      upiId: 'rahul.sharma@example',
+    {
+      id: 'financial',
+      title: 'Bank & payments',
+      sensitive: true,
+      fields: [
+        ['bankAccount', 'Bank account number'],
+        ['ifsc', 'IFSC'],
+        ['bankName', 'Bank name'],
+        ['branch', 'Bank branch'],
+        ['upiId', 'UPI ID'],
+      ],
     },
-
-    education: {
-      college: 'Example Institute of Technology',
-      university: 'Example University',
-      studentId: '24255115090',
-      registrationNumber: 'REG20260001',
-      course: 'Bachelor of Engineering',
-      branch: 'Information Science and Engineering',
-      year: '3',
-      semester: '5',
-      graduationYear: '2028',
+    {
+      id: 'education',
+      title: 'Education',
+      fields: [
+        ['college', 'College / university'],
+        ['studentId', 'Student ID / USN'],
+        ['registrationNumber', 'Registration number'],
+        ['course', 'Course'],
+        ['educationBranch', 'Branch / stream'],
+        ['year', 'Year of study'],
+        ['semester', 'Semester'],
+        ['graduationYear', 'Graduation year'],
+      ],
     },
-
-    professional: {
-      company: 'Example Technologies Pvt Ltd',
-      jobTitle: 'Software Engineering Intern',
-      department: 'Engineering',
-      employeeId: 'EMP20260001',
-      workEmail: 'rahul.sharma@company.example',
-      workPhone: '+918000000001',
+    {
+      id: 'professional',
+      title: 'Work',
+      fields: [
+        ['company', 'Company'],
+        ['jobTitle', 'Job title'],
+        ['department', 'Department'],
+        ['employeeId', 'Employee ID'],
+        ['workEmail', 'Work email', 'email'],
+        ['workPhone', 'Work phone', 'tel'],
+      ],
     },
-
-    online: {
-      github: 'https://github.com/rahul-example',
-      linkedin: 'https://www.linkedin.com/in/rahul-example',
-      portfolio: 'https://portfolio.example.com/rahul',
-      personalWebsite: 'https://rahul.example.com',
-      instagram: '@rahul_example',
-      twitter: '@rahul_example',
+    {
+      id: 'online',
+      title: 'Online',
+      fields: [
+        ['github', 'GitHub', 'url'],
+        ['linkedin', 'LinkedIn', 'url'],
+        ['portfolio', 'Portfolio', 'url'],
+        ['personalWebsite', 'Personal website', 'url'],
+        ['instagram', 'Instagram'],
+        ['twitter', 'X / Twitter'],
+      ],
     },
-
-    other: {
-      signature: 'Rahul Sharma',
-      bio: 'Software engineering student interested in web development and privacy technology.',
-      referralCode: 'REF-TEST-2026',
+    {
+      id: 'other',
+      title: 'Other',
+      fields: [
+        ['bio', 'Short bio', 'textarea'],
+        ['referralCode', 'Referral code'],
+      ],
     },
-  };
+  ];
 
-  Object.defineProperty(globalThis, 'PrivSightPIIConfig', {
-    value: PII_CONFIG,
+  // Government IDs and bank details are only filled on sites the user allows.
+  const SENSITIVE_KEYS = GROUPS
+    .filter((group) => group.sensitive)
+    .flatMap((group) => group.fields.map(([key]) => key));
+
+  Object.defineProperty(globalThis, 'PrivSightPIISchema', {
+    value: Object.freeze({
+      groups: GROUPS,
+      sensitiveKeys: SENSITIVE_KEYS,
+      storageKeys: {
+        profile: 'privsightProfile',            // { [fieldKey]: string }
+        settings: 'privsightAutofillSettings',  // { enabled, sensitiveSites: [origin] }
+      },
+      defaultSettings: { enabled: true, sensitiveSites: [] },
+    }),
     configurable: true,
     enumerable: false,
     writable: false,

@@ -101,6 +101,7 @@
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
     dashboardBtn:    $('ps-dashboard-btn'),
+    profileBtn:      $('ps-profile-btn'),
     closeBtn:        $('ps-close-btn'),
     chat:            $('ps-chat'),
     idle:            $('ps-idle'),
@@ -1105,6 +1106,18 @@
     chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
   }
 
+  // Opens the autofill profile, offering the ID/bank toggle for the current site.
+  async function openProfile() {
+    let site = '';
+    try {
+      const tab = await resolveActiveTab();
+      const url = new URL(tab?.url || '');
+      if (/^https?:$/.test(url.protocol)) site = url.origin;
+    } catch (_) {}
+    const query = site ? `?site=${encodeURIComponent(site)}` : '';
+    chrome.tabs.create({ url: chrome.runtime.getURL(`profile/profile.html${query}`) });
+  }
+
   // ══════════════════════════════════════════════════════════════
   // EVENT HANDLERS & INPUT AUTO-RESIZE
   // ══════════════════════════════════════════════════════════════
@@ -1149,6 +1162,7 @@
     initTheme();
 
     el.dashboardBtn.addEventListener('click', openDashboard);
+    if (el.profileBtn) el.profileBtn.addEventListener('click', openProfile);
     el.closeBtn.addEventListener('click', async () => {
       await stopAgent();
       window.close();
