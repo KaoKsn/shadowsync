@@ -601,10 +601,58 @@
     return { ok: true, navigated: true, tabId: tab.id, actionType: 'GO_FORWARD' };
   }
 
+  /**
+   * Navigate the current tab to a URL (NAVIGATE / backend open_url)
+   */
+  async function executeNavigateAction(action) {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) {
+      throw new Error('No active browser tab found for NAVIGATE.');
+    }
+
+    let targetUrl = action?.url ? String(action.url).trim() : '';
+    if (!targetUrl) throw new Error('NAVIGATE requires a url.');
+    if (!/^[a-zA-Z]+:\/\//.test(targetUrl)) targetUrl = 'https://' + targetUrl;
+
+    await waitForNavigation(tab.id, () => {
+      return new Promise((resolve) => {
+        chrome.tabs.update(tab.id, { url: targetUrl }, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[PrivSight Loop] chrome.tabs.update notice:', chrome.runtime.lastError.message);
+          }
+          resolve();
+        });
+      });
+    });
+
+    await waitForTabReady(tab.id);
+    await lockPage();
+    return { ok: true, navigated: true, tabId: tab.id, actionType: 'NAVIGATE' };
+  }
+
+  /**
+   * Ask the content script for the page's redacted visible text (READ_PAGE)
+   */
+  async function readActiveTabText(maxChars = 6000) {
+    const tab = await resolveActiveTab();
+    if (!tab?.id) return '';
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'READ_PAGE', maxChars }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          console.warn('[PrivSight Loop] READ_PAGE failed:', chrome.runtime.lastError?.message || resp?.error);
+          resolve('');
+        } else {
+          resolve(resp.text || '');
+        }
+      });
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════
   // AGENT EXECUTION LOOP (Backend Integration Guide)
   // ══════════════════════════════════════════════════════════════
-  const MAX_SAFETY_TURNS = 10;
+  // The backend enforces the real step budget; this is only a runaway guard.
+  const MAX_SAFETY_TURNS = 40;
 
   /**
    * startAgent(prompt)
@@ -760,25 +808,33 @@
           sanitizedScreenshotB64: capturedState.sanitized_screenshot_b64 || '',
           step: stepCount,
           changedSinceLastStep,
+          page: { url: capturedState.url, title: capturedState.title },
         };
 
         let turnResponse = await AgentBackendClient.postTurn(turnPayload);
         if (activeLoopAborted) break;
 
-        // A screenshot is sent only when requested. Keep its element numbering
-        // and DOM snapshot identical to the turn that requested it.
-        let screenshotRequests = 0;
-        while (turnResponse.type === 'REQUEST_SCREENSHOT' && !activeLoopAborted) {
-          if (++screenshotRequests > 2) throw new Error('The agent requested too many screenshots for the same page state.');
-          const screenshotB64 = capturedState.sanitized_screenshot_b64 || '';
-          if (!screenshotB64) throw new Error('The agent requested a screenshot, but the page capture did not produce one.');
-          turnResponse = await AgentBackendClient.postTaskScreenshot({
-            sessionId,
-            task: taskGoal,
-            step: stepCount,
-            elements: currentElements,
-            screenshotB64,
-          });
+        // Screenshots and page text are sent only when requested, against the
+        // same page state (and element numbering) as the turn that asked.
+        let infoRequests = 0;
+        while ((turnResponse.type === 'REQUEST_SCREENSHOT' || turnResponse.type === 'READ_PAGE') && !activeLoopAborted) {
+          if (++infoRequests > 3) throw new Error('The agent requested too much extra information for the same page state.');
+          if (turnResponse.type === 'READ_PAGE') {
+            renderActivity('reading_page', 'Reading page text (PII scrubbed locally)...');
+            const pageText = await readActiveTabText();
+            turnResponse = await AgentBackendClient.postTaskPageText({ sessionId, pageText });
+          } else {
+            const screenshotB64 = capturedState.sanitized_screenshot_b64 || '';
+            if (!screenshotB64) throw new Error('The agent requested a screenshot, but the page capture did not produce one.');
+            turnResponse = await AgentBackendClient.postTaskScreenshot({
+              sessionId,
+              task: taskGoal,
+              step: stepCount,
+              elements: currentElements,
+              screenshotB64,
+              page: turnPayload.page,
+            });
+          }
         }
         if (activeLoopAborted) break;
 
@@ -841,6 +897,13 @@
             const targetDisplay = turnResponse.url || 'blank tab';
             renderActivity('executing', `Opening new tab: ${targetDisplay}...`);
             execResult = await executeNewTabAction(turnResponse);
+            break;
+          }
+
+          case 'NAVIGATE': {
+            updateAgentStatus('executing');
+            renderActivity('executing', `Opening ${turnResponse.url || 'page'}...`);
+            execResult = await executeNavigateAction(turnResponse);
             break;
           }
 
@@ -929,7 +992,7 @@
 
       console.error('[PrivSight Loop] Execution failed:', error);
       const msg = error.message?.includes('Failed to fetch') || error.message?.includes('WebSocket')
-        ? 'Could not connect to backend at ws://localhost:8001/ws/task. Please ensure the WebSocket backend server is running.'
+        ? `Could not connect to backend at ${AgentBackendClient.WS_URL}. Please ensure the WebSocket backend server is running.`
         : `Agent error: ${error.message}`;
 
       addMessage('agent', `❌ ${msg}`);

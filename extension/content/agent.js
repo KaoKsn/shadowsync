@@ -849,6 +849,8 @@
 
     // 8. Return sanitized DOM and screenshot payload to send to backend
     return {
+      url: location.href,
+      title: document.title || '',
       sanitized_dom: sanitizedDom,
       sanitized_screenshot_b64: screenshotB64,
       human_gate: humanGate,
@@ -1019,13 +1021,25 @@
 
           el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
           el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+
+          if (action.submit) {
+            // Press Enter; fall back to a native form submit if the page ignored it.
+            const keyInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+            const notHandled = el.dispatchEvent(new KeyboardEvent('keydown', keyInit));
+            el.dispatchEvent(new KeyboardEvent('keypress', keyInit));
+            el.dispatchEvent(new KeyboardEvent('keyup', keyInit));
+            if (notHandled && el.form) {
+              if (typeof el.form.requestSubmit === 'function') el.form.requestSubmit();
+              else el.form.submit();
+            }
+          }
           break;
         }
 
         case 'SCROLL': {
-          // Default to scrolling down one viewport
+          const sign = String(action.direction || 'down').toLowerCase() === 'up' ? -1 : 1;
           window.scrollBy({
-            top: window.innerHeight * 0.85,
+            top: sign * window.innerHeight * 0.85,
             left: 0,
             behavior: 'smooth',
           });
@@ -1061,6 +1075,18 @@
     // Allow browser layout and DOM mutation observers to settle
     await new Promise((r) => setTimeout(r, 400));
     return { ok: true, actionType: type };
+  }
+
+  // ─── Page Text Reader ───────────────────────────────────
+  // Visible text of the main content, PII-scrubbed locally before it leaves the page.
+  function readPageText(maxChars) {
+    // innerText only returns rendered text: no scripts/styles, no form field values.
+    const root = document.querySelector('main, [role="main"], article') || document.body;
+    let text = (root.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (typeof DOMRedactor !== 'undefined' && typeof DOMRedactor.redactString === 'function') {
+      text = DOMRedactor.redactString(text, null);
+    }
+    return text.length > maxChars ? text.slice(0, maxChars) + '…' : text;
   }
 
   // ─── Chrome Message Handlers ─────────────────────────────
@@ -1132,6 +1158,16 @@
           console.error('[PrivSight] Capture error:', err);
           sendResponse({ ok: false, error: err.message });
         });
+      return true;
+    }
+
+    // 3b. Read page text (redacted) for the backend's read_page action
+    if (message.type === 'READ_PAGE') {
+      try {
+        sendResponse({ ok: true, text: readPageText(message.maxChars || 6000) });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
       return true;
     }
 

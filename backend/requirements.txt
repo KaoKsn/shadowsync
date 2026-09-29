@@ -1,9 +1,0 @@
-fastapi
-langgraph
-langsmith
-ollama
-openai
-pydantic
-pydantic-settings
-python-dotenv
-uvicorn[standard]

@@ -12,7 +12,6 @@
 
 (function (global) {
   'use strict';
-
   const SESSIONS_STORAGE_KEY = 'agentSessions';
   const CURRENT_SESSION_ID_KEY = 'agentCurrentSessionId';
 
@@ -171,7 +170,7 @@
   // sidepanel.js requires zero changes.
   // ---------------------------------------------------------------------------
 
-  const WS_URL = 'ws://172.19.143.248:8000/ws/task';
+  const WS_URL = 'ws://localhost:8000/ws/task';
 
   /**
    * Normalise a raw WS response into the internal action shape sidepanel.js uses.
@@ -185,7 +184,9 @@
       type_text:           'TYPE',
       scroll:              'SCROLL',
       new_tab:             'NEW_TAB',
+      open_url:            'NAVIGATE',
       go_back:             'GO_BACK',
+      read_page:           'READ_PAGE',
       go_forward:          'GO_FORWARD',
       user:                'USER',
       request_screenshot:  'REQUEST_SCREENSHOT',
@@ -201,15 +202,41 @@
       type:        internalType,
       data_hint:   action.target_id != null ? String(action.target_id) : null,
       element_id:  action.target_id != null ? String(action.target_id) : null,
-      text:        action.text   || action.prompt || action.question || raw.summary || null,
+      text:        action.text   || action.message || action.prompt || action.question || raw.summary || null,
       url:         action.url    || null,
       direction:   action.direction || null,
-      reasoning:   action.summary || action.reasoning || raw.summary || null,
+      submit:      Boolean(action.submit),
+      reasoning:   action.reason || action.summary || action.reasoning || raw.summary || null,
       is_complete: isComplete,
       is_failed:   isFailed,
       summary:     raw.summary   || action.summary || null,
       _raw:        raw,
     };
+  }
+
+  /**
+   * Downscale a (redacted) screenshot to max 1024px and re-encode as JPEG so
+   * the payload is a fraction of the original PNG. Falls back to the input.
+   */
+  async function compressScreenshot(b64, maxSide = 1024, quality = 0.6) {
+    const clean = String(b64 || '').replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+    if (!clean) return '';
+    try {
+      const bytes = Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes]));
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < buf.length; i += 0x8000) binary += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return btoa(binary);
+    } catch (err) {
+      console.warn('[PrivSight] Screenshot compression failed, sending original:', err.message);
+      return clean;
+    }
   }
 
   /**
@@ -307,10 +334,12 @@
       });
     },
 
-    buildSnapshot(sessionId, step, elements, changedSinceLastStep, screenshotAvailable, screenshotB64) {
+    buildSnapshot(sessionId, step, elements, changedSinceLastStep, screenshotAvailable, screenshotB64, page = {}) {
       const snapshot = {
         session_id:              String(sessionId),
         step,
+        url:                     page.url || null,
+        title:                   page.title || null,
         elements,
         changed_since_last_step: changedSinceLastStep || [],
         screenshot_available:    Boolean(screenshotAvailable),
@@ -320,34 +349,42 @@
       return snapshot;
     },
 
-    async postTaskStart({ sessionId, task, elements, screenshotAvailable }) {
+    async postTaskStart({ sessionId, task, elements, screenshotAvailable, page }) {
       if (!sessionId) throw new Error('postTaskStart: sessionId is required');
       if (_activeWsSession) { _activeWsSession.stop(); _activeWsSession = null; }
       const session = new AgentWebSocketSession(sessionId, task || '');
       await session.connect();
       _activeWsSession = session;
-      const snapshot = this.buildSnapshot(sessionId, 0, elements || [], [], screenshotAvailable !== false, null);
+      const snapshot = this.buildSnapshot(sessionId, 0, elements || [], [], screenshotAvailable !== false, null, page);
       const raw = await session.sendAndReceive({ type: 'start', session_id: String(sessionId), task: String(task || ''), snapshot });
       return normaliseBackendResponse(raw);
     },
 
-    async postTaskStep({ sessionId, task, step, elements, changedSinceLastStep, screenshotAvailable }) {
+    async postTaskStep({ sessionId, task, step, elements, changedSinceLastStep, screenshotAvailable, page }) {
       if (!sessionId)        throw new Error('postTaskStep: sessionId is required');
       if (!_activeWsSession) throw new Error('postTaskStep: no active WebSocket -- call postTaskStart first');
       const effectiveTask = String(task || (_activeWsSession ? _activeWsSession.task : '') || '');
       if (effectiveTask && _activeWsSession) _activeWsSession.task = effectiveTask;
-      const snapshot = this.buildSnapshot(sessionId, step, elements || [], changedSinceLastStep || [], screenshotAvailable !== false, null);
+      const snapshot = this.buildSnapshot(sessionId, step, elements || [], changedSinceLastStep || [], screenshotAvailable !== false, null, page);
       const raw = await _activeWsSession.sendAndReceive({ type: 'step', session_id: String(sessionId), task: effectiveTask, snapshot });
       return normaliseBackendResponse(raw);
     },
 
-    async postTaskScreenshot({ sessionId, task, step, elements, screenshotB64 }) {
+    async postTaskScreenshot({ sessionId, task, step, elements, screenshotB64, page }) {
       if (!sessionId)        throw new Error('postTaskScreenshot: sessionId is required');
       if (!_activeWsSession) throw new Error('postTaskScreenshot: no active WebSocket session');
       const effectiveTask = String(task || (_activeWsSession ? _activeWsSession.task : '') || '');
-      const cleanB64 = (screenshotB64 || '').replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
-      const snapshot = this.buildSnapshot(sessionId, step, this.toBackendElements(elements), [], true, cleanB64);
+      const compact = await compressScreenshot(screenshotB64);
+      const snapshot = this.buildSnapshot(sessionId, step, this.toBackendElements(elements), [], true, compact, page);
       const raw = await _activeWsSession.sendAndReceive({ type: 'screenshot', session_id: String(sessionId), task: effectiveTask, snapshot });
+      return normaliseBackendResponse(raw);
+    },
+
+    // Reply to a read_page action with the page's redacted visible text.
+    async postTaskPageText({ sessionId, pageText }) {
+      if (!sessionId)        throw new Error('postTaskPageText: sessionId is required');
+      if (!_activeWsSession) throw new Error('postTaskPageText: no active WebSocket session');
+      const raw = await _activeWsSession.sendAndReceive({ type: 'page_text', session_id: String(sessionId), page_text: String(pageText || '') });
       return normaliseBackendResponse(raw);
     },
 
@@ -371,14 +408,15 @@
       }));
     },
 
-    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64, step, changedSinceLastStep }) {
+    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64, step, changedSinceLastStep, page }) {
       if (!sessionId) throw new Error('postTurn: sessionId is required');
       const elements = this.toBackendElements(sanitizedDom);
       const stepIndex = typeof step === 'number' ? step : 0;
+      const screenshotAvailable = Boolean(sanitizedScreenshotB64);
       if (stepIndex === 0) {
-        return this.postTaskStart({ sessionId, task: taskGoal || '', elements, screenshotAvailable: true });
+        return this.postTaskStart({ sessionId, task: taskGoal || '', elements, screenshotAvailable, page });
       } else {
-        return this.postTaskStep({ sessionId, task: taskGoal || '', step: stepIndex, elements, changedSinceLastStep: changedSinceLastStep || [], screenshotAvailable: true });
+        return this.postTaskStep({ sessionId, task: taskGoal || '', step: stepIndex, elements, changedSinceLastStep: changedSinceLastStep || [], screenshotAvailable, page });
       }
     },
 
