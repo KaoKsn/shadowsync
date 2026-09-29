@@ -1,7 +1,7 @@
 /**
  * PIIRedactor - Advanced General-Purpose PII & PHI Redaction Engine
  * 3-Pass Pipeline:
- *   Pass 1 (redactHTML only): Structured label-value pair redaction (DOM-aware regex)
+ *   Pass 1 (DOM/HTML): Structured field pairing through DOM traversal
  *   Pass 2: Syntactic regex pattern matching (SSN, email, CC, phone, IP, API keys, etc.)
  *   Pass 3: NER via Compromise.js (person names, organization names, contextual entities)
  *
@@ -66,8 +66,16 @@
   const FIELD_MAPPINGS = [
     { keywords: ['full name', 'first name', 'last name', 'mother\'s maiden name', 'maiden name', 'account owner', 'customer name', 'patient name', 'cardholder name', 'name'], tag: 'NAME' },
     { keywords: ['date of birth', 'dob', 'birthdate', 'birth date'], tag: 'DOB' },
+    { keywords: ['place of birth', 'city', 'district', 'state', 'locality', 'region'], tag: 'LOCATION' },
+    { keywords: ['nationality', 'gender', 'age', 'marital status'], tag: 'SENSITIVE_ATTRIBUTE' },
+    { keywords: ['blood group', 'blood type'], tag: 'MEDICAL_ATTRIBUTE' },
+    { keywords: ['house number', 'house no'], tag: 'ADDRESS' },
+    { keywords: ['voter id', 'voter identification number'], tag: 'VOTER_ID' },
     { keywords: ['social security number', 'social security', 'ssn', 'sin', 'national insurance number', 'national id', 'government id'], tag: 'SSN' },
-    { keywords: ['driver\'s license', 'driver license', 'drivers license', 'license number', 'dl number'], tag: 'DRIVER_LICENSE' },
+    { keywords: ['driving licence', 'driving license', 'driver\'s licence', 'driver\'s license', 'driver licence', 'driver license', 'drivers license', 'license number', 'dl number'], tag: 'DRIVER_LICENSE' },
+    { keywords: ['university registration number', 'university registration no', 'university registration', 'roll number', 'roll no', 'usn'], tag: 'STUDENT_ID' },
+    { keywords: ['pan reference', 'pan number', 'permanent account number'], tag: 'TAX_ID' },
+    { keywords: ['ifsc code', 'ifsc'], tag: 'IFSC_CODE' },
     { keywords: ['passport number', 'passport'], tag: 'PASSPORT' },
     { keywords: ['primary email', 'secondary email', 'contact email', 'email address', 'email'], tag: 'EMAIL' },
     { keywords: ['mobile phone', 'home phone', 'work phone', 'direct line', 'telephone', 'phone number', 'phone', 'cell phone', 'fax'], tag: 'PHONE' },
@@ -82,6 +90,7 @@
     { keywords: ['known allergies', 'allergies', 'allergy', 'drug allergies'], tag: 'ALLERGIES' },
     { keywords: ['prescription medications', 'medications', 'prescriptions', 'current medications', 'drugs'], tag: 'PRESCRIPTION_MEDICATIONS' },
     { keywords: ['username', 'user name', 'login name', 'login id', 'user id'], tag: 'USERNAME' },
+    { keywords: ['upi id'], tag: 'UPI_ID' },
     { keywords: ['password hash', 'password', 'secret question answer', 'security question answer', 'secret answer'], tag: 'PASSWORD_HASH' },
     { keywords: ['account recovery pin', 'recovery pin', 'security pin', 'account pin', 'pin number', 'pin'], tag: 'PIN' },
     { keywords: ['live api auth key', 'api auth key', 'api key', 'api secret', 'auth key', 'access key', 'secret key'], tag: 'API_KEY' },
@@ -90,6 +99,13 @@
     { keywords: ['ethnicity', 'race', 'religion', 'sexual orientation', 'gender identity'], tag: 'SENSITIVE_ATTRIBUTE' },
     { keywords: ['biometric', 'fingerprint', 'face scan', 'iris scan', 'retina scan'], tag: 'BIOMETRIC' },
   ];
+
+  function resolveFieldMapping(label) {
+    const cleanLabel = String(label || '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[:#\s]+$/, '');
+    const exactMatch = FIELD_MAPPINGS.find(fm => fm.keywords.some(kw => cleanLabel === kw));
+    return exactMatch || FIELD_MAPPINGS.find(fm => fm.keywords.some(kw => cleanLabel.includes(kw))) ||
+      (/\bpan\b/i.test(cleanLabel) ? { tag: 'TAX_ID' } : /\bid$/i.test(cleanLabel) ? { tag: 'IDENTIFIER' } : null);
+  }
 
   // ---------------------------------------------------------------------------
   // PIIRedactor Class
@@ -192,6 +208,9 @@
     redactText(text, customOptions = {}) {
       if (!text || typeof text !== 'string') return '';
       const opts = Object.assign({}, this.options, customOptions);
+      if (!opts._skipHtml && /<\/?[a-z][\w:-]*(?:\s[^<>]*)?>/i.test(text)) {
+        return this.redactHTML(text, Object.assign({}, opts, { _skipHtml: true }));
+      }
 
       const [scrubbed, restore] = protectTokens(text);
       let out = scrubbed;
@@ -261,7 +280,7 @@
         (m, prefix, val) => `${prefix}${formatTag('PIN', opts.style, val)}`);
 
       // 9. Dates of Birth (contextual — keyword must precede)
-      out = out.replace(/(\b(?:dob|date\s*of\s*birth|birth\s*date|birthdate|born)\s*(?:is|on|:)?\s*\(?)(?:<strong>)?([0-9]{1,2}[\/\.-][0-9]{1,2}[\/\.-][0-9]{2,4}|[0-9]{4}[\/\.-][0-9]{1,2}[\/\.-][0-9]{1,2}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})(?:<\/strong>)?(\)?)/gi,
+      out = out.replace(/(\b(?:dob|date\s*of\s*birth|birth\s*date|birthdate|born)\s*(?:is|on|:)?\s*\(?)(?:<strong>)?([0-9]{1,2}[\/\.-][0-9]{1,2}[\/\.-][0-9]{2,4}|[0-9]{4}[\/\.-][0-9]{1,2}[\/\.-][0-9]{1,2}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4}|[0-9]{1,2}\s+[A-Za-z]+,?\s+[0-9]{4})(?:<\/strong>)?(\)?)/gi,
         (m, p1, dateVal, p2) => `${p1}${formatTag('DOB', opts.style, dateVal)}${p2}`);
       // Verified identity using DOB
       out = out.replace(/(\b(?:verified?\s*(?:identity\s*)?(?:using|with|via)\s*(?:her|his|their)?\s*(?:dob|date\s*of\s*birth)?)\s*\(?)(?:<strong>)?([0-9]{1,2}[\/\.-][0-9]{1,2}[\/\.-][0-9]{2,4})(?:<\/strong>)?(\)?)/gi,
@@ -270,6 +289,12 @@
       // 10. Bank Routing Numbers (contextual)
       out = out.replace(/(\b(?:Routing|ABA\s*Routing|Routing\s*Number|RTN)\s*[:#=]?\s*)(?:<strong>)?([0-9]{9})\b(?:<\/strong>)?/gi,
         (m, prefix, val) => `${prefix}${formatTag('ROUTING_NUMBER', opts.style, val)}`);
+
+      // Indian PAN and IFSC identifiers (contextual)
+      out = out.replace(/(\bPAN(?:\s+(?:reference|number|no\.?))?\s*[:#=]?\s*)([A-Z]{5}[0-9]{4}[A-Z])\b/gi,
+        (m, prefix, val) => `${prefix}${formatTag('TAX_ID', opts.style, val)}`);
+      out = out.replace(/(\bIFSC(?:\s+code)?\s*[:#=]?\s*)([A-Z]{4}0[A-Z0-9]{6})\b/gi,
+        (m, prefix, val) => `${prefix}${formatTag('IFSC_CODE', opts.style, val)}`);
 
       // 11. Medical Record Numbers
       out = out.replace(/\bMRN?[-\s]?[0-9A-Z]{4,12}\b/gi, (m) => formatTag('MRN', opts.style, m));
@@ -318,27 +343,113 @@
     }
 
     // -------------------------------------------------------------------------
+    // Redact a cloned DOM tree without changing the caller's source tree.
+    redactDOM(domRoot, customOptions = {}) {
+      if (!domRoot || typeof domRoot.cloneNode !== 'function') return null;
+      const opts = Object.assign({}, this.options, customOptions);
+      const root = domRoot.cloneNode(true);
+      const doc = root.nodeType === 9 ? root : root.ownerDocument;
+      const queryRoot = root.nodeType === 9 ? root.documentElement : root;
+      if (!doc || !queryRoot || typeof queryRoot.querySelectorAll !== 'function') return root;
+
+      const elements = (selector) => {
+        const matches = [];
+        if (queryRoot.matches && queryRoot.matches(selector)) matches.push(queryRoot);
+        matches.push(...queryRoot.querySelectorAll(selector));
+        return matches;
+      };
+
+      const redactValue = (valueElement, mapping) => {
+        if (!valueElement || !mapping) return;
+        const cleanValue = valueElement.textContent.trim();
+        if (!cleanValue || cleanValue.includes('[REDACTED_') || cleanValue.includes('███')) return;
+        if (mapping.tag === 'ADDRESS' && cleanValue.toLowerCase().includes('same as')) return;
+        valueElement.textContent = formatTag(mapping.tag, opts.style, cleanValue);
+      };
+
+      const boundarySelector = 'tr, .data-row, .field, .form-group, li, p';
+      const classFields = elements('.label, .value');
+      let pendingLabel = null;
+      let pendingMapping = null;
+      for (const element of classFields) {
+        if (element.matches('.label')) {
+          pendingLabel = element;
+          pendingMapping = resolveFieldMapping(element.textContent);
+          continue;
+        }
+        if (!pendingLabel || !pendingMapping) continue;
+
+        const labelBoundary = pendingLabel.closest(boundarySelector);
+        const valueBoundary = element.closest(boundarySelector);
+        if ((labelBoundary && labelBoundary === valueBoundary) || (!labelBoundary && !valueBoundary)) {
+          redactValue(element, pendingMapping);
+        }
+        pendingLabel = null;
+        pendingMapping = null;
+      }
+
+      for (const row of elements('tr')) {
+        const cells = Array.from(row.children).filter(cell => cell.matches('th, td'));
+        for (let index = 0; index < cells.length - 1; index++) {
+          const labelCell = cells[index];
+          if (labelCell.classList.contains('value')) continue;
+          const mapping = resolveFieldMapping(labelCell.textContent);
+          if (!mapping) continue;
+          const valueCell = cells.slice(index + 1).find(cell => cell.classList.contains('value')) || cells[index + 1];
+          redactValue(valueCell, mapping);
+        }
+      }
+
+      for (const labelElement of elements('label, dt')) {
+        const mapping = resolveFieldMapping(labelElement.textContent);
+        if (!mapping) continue;
+        const valueElement = labelElement.nextElementSibling;
+        if (valueElement && !valueElement.matches('label, dt')) redactValue(valueElement, mapping);
+      }
+
+      const walker = doc.createTreeWalker(root, 4);
+      let textNode;
+      while ((textNode = walker.nextNode())) {
+        if (textNode.parentElement && textNode.parentElement.closest('script, style, noscript')) continue;
+        textNode.nodeValue = this.redactText(textNode.nodeValue, Object.assign({}, opts, { _skipHtml: true }));
+      }
+
+      return root;
+    }
+
     // PASS 1 + 2 + 3: Full HTML redaction
     // -------------------------------------------------------------------------
     redactHTML(htmlString, customOptions = {}) {
+      if (htmlString && typeof htmlString === 'object' && typeof htmlString.cloneNode === 'function') {
+        return this.redactDOM(htmlString, customOptions);
+      }
       if (!htmlString || typeof htmlString !== 'string') return '';
+      if (typeof DOMParser !== 'undefined') {
+        const source = htmlString;
+        const parsed = new DOMParser().parseFromString(source, 'text/html');
+        const redacted = this.redactDOM(parsed, customOptions);
+        if (/<html(?:\s|>)/i.test(source)) {
+          const doctype = redacted.doctype ? `<!DOCTYPE ${redacted.doctype.name}>` : '';
+          return `${doctype}${redacted.documentElement.outerHTML}`;
+        }
+        return redacted.body.innerHTML;
+      }
       const opts = Object.assign({}, this.options, customOptions);
       let html = htmlString;
 
       // -----------------------------------------------------------------------
       // PASS 1: Structured label-value pair redaction
-      // Regex matches: <element class="label">...</element> ... <element class="value">...</element>
+      // Match class-marked fields and semantic label/table/list sibling pairs.
       // -----------------------------------------------------------------------
-      const labelValRegex = /(<(?:span|div|label|td|dt|th|li|p)[^>]*class=["'][^"']*\blabel\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:span|div|label|td|dt|th|li|p)>[\s\S]*?<(?:span|div|dd|td|p|li)[^>]*class=["'][^"']*\bvalue\b[^"']*["'][^>]*>)([\s\S]*?)(<\/(?:span|div|dd|td|p|li)>)/gi;
-
-      html = html.replace(labelValRegex, (fullMatch, prefix, labelHtml, valHtml, suffix) => {
+      const redactFieldPair = (fullMatch, prefix, labelHtml, valHtml, suffix) => {
         const cleanLabel = labelHtml.replace(/<[^>]+>/g, '').trim().toLowerCase().replace(/[:#\s]+$/, '');
         const cleanVal = valHtml.replace(/<[^>]+>/g, '').trim();
 
         if (!cleanVal || cleanVal.includes('[REDACTED_') || cleanVal.includes('███')) return fullMatch;
 
         const exactMatch = FIELD_MAPPINGS.find(fm => fm.keywords.some(kw => cleanLabel === kw));
-        const matched = exactMatch || FIELD_MAPPINGS.find(fm => fm.keywords.some(kw => cleanLabel.includes(kw)));
+        const matched = exactMatch || FIELD_MAPPINGS.find(fm => fm.keywords.some(kw => cleanLabel.includes(kw))) ||
+          (/\bpan\b/i.test(cleanLabel) ? { tag: 'TAX_ID' } : /\bid$/i.test(cleanLabel) ? { tag: 'IDENTIFIER' } : null);
         if (!matched) return fullMatch;
 
         let replacementVal;
@@ -355,12 +466,20 @@
         }
 
         return `${prefix}${replacementVal}${suffix}`;
-      });
+      };
+
+      const classPairRegex = /(<([a-z][\w:-]*)\b[^>]*class=["'][^"']*\blabel\b[^"']*["'][^>]*>([\s\S]*?)<\/\2\s*>[\s\S]*?<([a-z][\w:-]*)\b[^>]*class=["'][^"']*\bvalue\b[^"']*["'][^>]*>)([\s\S]*?)(<\/\4\s*>)/gi;
+      html = html.replace(classPairRegex, (fullMatch, prefix, labelTag, labelHtml, valueTag, valHtml, suffix) =>
+        redactFieldPair(fullMatch, prefix, labelHtml, valHtml, suffix));
+
+      const semanticPairRegex = /(<(label|th|td|dt)\b[^>]*>(?!\s*\d+\s*<\/\2\s*>)([\s\S]*?)<\/\2\s*>\s*<([a-z][\w:-]*)\b[^>]*>)([\s\S]*?)(<\/\4\s*>)/gi;
+      html = html.replace(semanticPairRegex, (fullMatch, prefix, labelTag, labelHtml, valueTag, valHtml, suffix) =>
+        redactFieldPair(fullMatch, prefix, labelHtml, valHtml, suffix));
 
       // -----------------------------------------------------------------------
       // PASS 2: Syntactic regex on remaining text content
       // -----------------------------------------------------------------------
-      html = this.redactText(html, Object.assign({}, opts, { _skipNer: true }));
+      html = this.redactText(html, Object.assign({}, opts, { _skipNer: true, _skipHtml: true }));
 
       // -----------------------------------------------------------------------
       // PASS 3: NER on HTML text nodes (Compromise.js)
