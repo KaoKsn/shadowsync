@@ -42,6 +42,9 @@
   let isPageLocked = false;
   let isExecutingAgentAction = false;
   let isUserInteractiveMode = false;
+  let humanSubmitListener = null;
+  let humanSubmitClickListener = null;
+  let humanSubmitClickTimer = null;
   let overlayWatchdogTimer = null;
 
   // ─── Main Browser User Interaction Lock ───────────────────
@@ -538,6 +541,7 @@
       createOverlay();
     }
 
+    const humanGate = detectHumanInputGate();
     activeHints.clear();
     const redactor = getRedactor();
 
@@ -668,7 +672,12 @@
 
       // Visible text content (aria-label preferred, then textContent, then value/placeholder)
       let textContent = null;
-      const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || null;
+      let ariaLabel = el.getAttribute('aria-label') || null;
+      const labelledBy = el.getAttribute('aria-labelledby');
+      if (!ariaLabel && labelledBy) {
+        ariaLabel = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || '').filter(Boolean).join(' ');
+      }
+      if (!ariaLabel && el.labels?.length) ariaLabel = Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ');
       if (ariaLabel) {
         textContent = ariaLabel.trim() || null;
       } else if (tagName !== 'input' && tagName !== 'textarea' && tagName !== 'select') {
@@ -676,11 +685,9 @@
         textContent = raw.length > 0 && raw.length <= 200 ? raw : (raw.length > 200 ? raw.substring(0, 200) + '…' : null);
       }
 
-      // Current value (for inputs/textareas/selects)
-      let elementValue = null;
-      if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
-        elementValue = (el.value || el.getAttribute('value') || el.getAttribute('placeholder') || null);
-      }
+      // Never send user-entered form values to the model. Labels and field type
+      // are sufficient for the agent to identify controls by their stable mark_id.
+      const elementValue = null;
 
       // Redaction: detect if this element's text or value was scrubbed
       const isRedacted = (
@@ -711,8 +718,14 @@
         mark_id:          index,
         tag:              tagName,
         role:             role,
+        input_type:       inputType,
         text:             safeText,
         value:            safeValue,
+        name:             el.getAttribute('name') || null,
+        placeholder:      el.getAttribute('placeholder') || null,
+        aria_label:       ariaLabel,
+        disabled:         Boolean(el.disabled),
+        checked:          null,
         redacted:         isRedacted,
         redaction_reason: redactionReason,
         // Legacy field kept for backward compatibility with action executor (findElement)
@@ -726,6 +739,7 @@
     try {
       // 4. Capture screenshot — hide Aurora overlay only for the ~30ms capture
       // window so the AI vision model never sees the borders/logo, then restore.
+      const restoreFormValues = maskFormValuesForScreenshot();
       hideOverlayForCapture();
 
       // Two-frame flush: ensures browser composites the hidden overlay before
@@ -764,6 +778,7 @@
           capturedDataUrl = canvas.toDataURL('image/png');
         }
       } finally {
+        restoreFormValues();
         // Immediately restore Aurora overlay — it was gone for ≤~55ms total
         showOverlayAfterCapture();
       }
@@ -836,8 +851,95 @@
     return {
       sanitized_dom: sanitizedDom,
       sanitized_screenshot_b64: screenshotB64,
+      human_gate: humanGate,
+      human_gate_key: humanGate ? `${location.origin}${location.pathname}` : null,
       stats: scrubbingStats,
     };
+  }
+
+  function detectHumanInputGate() {
+    const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const visible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    };
+    const controls = Array.from(document.querySelectorAll('input, textarea, select')).filter(visible);
+    const labels = controls.map((field) => {
+      const labelled = field.getAttribute('aria-label') || '';
+      const references = (field.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || '').join(' ');
+      const explicit = field.labels ? Array.from(field.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
+      const enclosingLabel = field.closest('label')?.innerText || field.closest('label')?.textContent || '';
+      return normalize([field.name, field.id, field.placeholder, labelled, references, explicit, enclosingLabel, field.autocomplete].join(' '));
+    }).join(' ');
+    const url = normalize(location.pathname);
+    const title = normalize(document.title);
+    const headings = normalize(Array.from(document.querySelectorAll('h1,h2,[role="heading"]')).filter(visible).map((el) => el.innerText || el.textContent).join(' '));
+    const controlsPresent = controls.length > 0;
+    const pageText = normalize((document.body?.innerText || '').slice(0, 5000));
+    const buttonText = normalize(Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible).map((el) => el.innerText || el.textContent).join(' '));
+    const hasPassword = controls.some((field) => field.type === 'password');
+    const privateField = /\b(?:email|phone|mobile|address|full name|first name|last name|aadhaar|passport|bank account|student id|usn|date of birth)\b/.test(labels);
+    const humanSubmit = /\b(?:submit|continue|register|sign up|log in|login|verify|apply|save profile|next)\b/.test(buttonText);
+
+    if (controlsPresent && /\b(?:one time code|otp|verification code|security code|captcha|human verification)\b/.test(labels)) return 'Verification';
+    if (controlsPresent && /\b(?:credit card|card number|cvv|cvc|payment method)\b/.test(labels)) return 'Payment details';
+    if (controlsPresent && /\b(?:checkout|payment)\b/.test(`${url} ${title} ${headings}`)) return 'Payment details';
+    if (hasPassword || (controlsPresent && /\b(?:login|log in|sign in|signin|sign up|signup|register|registration|create account)\b/.test(`${url} ${title} ${headings}`))) return 'Login or account details';
+    if (/\b(?:consent|cookie preferences|privacy choices)\b/.test(`${url} ${title} ${headings} ${pageText}`) && /\b(?:accept|reject|save choices|manage preferences)\b/.test(buttonText)) return 'Consent choices';
+    if (controlsPresent && privateField && humanSubmit) return 'Private information';
+    if (controlsPresent && /\b(?:application|scholarship|profile)\b/.test(`${url} ${title} ${headings}`) && /\b(?:email|phone|address|identity|student id)\b/.test(labels)) return 'Private information';
+    return null;
+  }
+
+  function maskFormValuesForScreenshot() {
+    const restore = [];
+    document.querySelectorAll('input, textarea, select').forEach((field) => {
+      if (field instanceof HTMLInputElement && ['checkbox', 'radio'].includes(field.type)) {
+        if (field.checked) { restore.push(() => { field.checked = true; }); field.checked = false; }
+        return;
+      }
+      if (field instanceof HTMLInputElement && field.type === 'file' && field.value) {
+        const oldVisibility = field.style.getPropertyValue('visibility');
+        const oldPriority = field.style.getPropertyPriority('visibility');
+        restore.push(() => {
+          if (oldVisibility) field.style.setProperty('visibility', oldVisibility, oldPriority);
+          else field.style.removeProperty('visibility');
+        });
+        field.style.setProperty('visibility', 'hidden', 'important');
+        return;
+      }
+      if (field instanceof HTMLInputElement && ['button', 'submit', 'reset', 'image', 'file', 'hidden'].includes(field.type)) return;
+      if (field instanceof HTMLSelectElement) {
+        const selected = Array.from(field.options).filter((option) => option.selected);
+        if (selected.length) {
+          restore.push(() => { selected.forEach((option) => { option.selected = true; }); });
+          field.selectedIndex = -1;
+        }
+        return;
+      }
+      if (field.value) {
+        const value = field.value;
+        restore.push(() => { field.value = value; });
+        field.value = '';
+      }
+    });
+    return () => restore.reverse().forEach((restoreField) => { try { restoreField(); } catch (_) {} });
+  }
+
+  function disarmHumanSubmitListener() {
+    if (humanSubmitClickTimer) {
+      clearTimeout(humanSubmitClickTimer);
+      humanSubmitClickTimer = null;
+    }
+    if (humanSubmitListener) {
+      document.removeEventListener('submit', humanSubmitListener, true);
+      humanSubmitListener = null;
+    }
+    if (humanSubmitClickListener) {
+      document.removeEventListener('click', humanSubmitClickListener, true);
+      humanSubmitClickListener = null;
+    }
   }
 
   // ─── Action Executor Engine ─────────────────────────────
@@ -971,6 +1073,7 @@
     }
 
     if (message.type === 'STOP_AGENT') {
+      disarmHumanSubmitListener();
       removeOverlay(message.immediate || false);
       sendResponse({ ok: true, status: 'overlay_removed' });
       return true;
@@ -986,6 +1089,36 @@
     if (message.type === 'RESUME_AGENT_MODE') {
       setOverlayInteractive(false);
       sendResponse({ ok: true, status: 'interactive_resumed' });
+      return true;
+    }
+
+    if (message.type === 'ARM_HUMAN_SUBMIT') {
+      disarmHumanSubmitListener();
+      humanSubmitListener = () => {
+        disarmHumanSubmitListener();
+        // Notify before a native submission navigates away from this document.
+        chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+      };
+      document.addEventListener('submit', humanSubmitListener, true);
+      humanSubmitClickListener = (event) => {
+        const control = event.target?.closest?.('button, input[type="submit"], input[type="button"], [role="button"]');
+        if (!control) return;
+        const label = [control.innerText, control.value, control.getAttribute('aria-label'), control.getAttribute('title')]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!/\b(?:continue|submit|next|sign in|log in|login|sign up|register|verify|apply|save and continue|accept|reject|agree|allow|save choices|confirm)\b/.test(label)) return;
+
+        // Many single-page forms advance from a button click without dispatching
+        // a native submit event. Give the page time to process that click before
+        // resuming; native form submits are handled immediately above.
+        if (humanSubmitClickTimer) clearTimeout(humanSubmitClickTimer);
+        humanSubmitClickTimer = setTimeout(() => {
+          humanSubmitClickTimer = null;
+          disarmHumanSubmitListener();
+          chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+        }, 800);
+      };
+      document.addEventListener('click', humanSubmitClickListener, true);
+      sendResponse({ ok: true, status: 'waiting_for_submit' });
       return true;
     }
 
@@ -1085,6 +1218,7 @@
   // Called by the re-injection guard at the top of the IIFE when the extension
   // reloads, so old listeners + overlay are torn down before new ones register.
   window.__PRIVSIGHT_AGENT_CLEANUP__ = function cleanup() {
+    disarmHumanSubmitListener();
     stopOverlayWatchdog();
     disableInteractionLock();
     clearTimeout(agentTimer);
@@ -1105,6 +1239,12 @@
   };
 
   window.addEventListener('pagehide', () => {
+    // A qualifying click that navigated away before the 800ms delay elapsed
+    // still counts as a submission; send it now instead of dropping it.
+    if (humanSubmitClickTimer) {
+      chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+    }
+    disarmHumanSubmitListener();
     stopOverlayWatchdog();
     disableInteractionLock();
     clearTimeout(agentTimer);

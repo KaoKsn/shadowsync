@@ -73,14 +73,16 @@
     </div>
 
     <!-- ── Human-in-the-loop User Action Prompt (visible on USER type) ── -->
-    <div class="ps-user-prompt" id="ps-user-prompt" style="display: none;">
+    <div class="ps-user-prompt" id="ps-user-prompt" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="ps-user-prompt-title">
+      <div class="ps-user-prompt__dialog">
       <div class="ps-user-prompt__header">
-        <span class="ps-user-prompt__badge">Action Required</span>
+        <span class="ps-user-prompt__badge" id="ps-user-prompt-title">Your input is needed</span>
       </div>
       <p class="ps-user-prompt__text" id="ps-user-prompt-text"></p>
       <div class="ps-user-prompt__actions">
-        <button class="ps-btn ps-btn--primary" id="ps-resume-btn">Resume Agent</button>
-        <button class="ps-btn ps-btn--secondary" id="ps-cancel-btn">Cancel</button>
+        <button class="ps-btn ps-btn--primary" id="ps-resume-btn">OK</button>
+        <button class="ps-btn ps-btn--secondary" id="ps-cancel-btn">Stop</button>
+      </div>
       </div>
     </div>
 

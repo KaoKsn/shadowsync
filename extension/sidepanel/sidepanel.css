@@ -788,13 +788,26 @@ body::after {
 
 /* ── Human-in-the-loop User Action Prompt ─────────────────── */
 .ps-user-prompt {
-  margin: 10px 14px;
-  padding: 12px 14px;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(3, 7, 18, 0.76);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  animation: prompt-in 0.2s ease-out;
+}
+
+.ps-user-prompt__dialog {
+  width: 100%;
+  max-width: 420px;
+  padding: 18px;
+  background: var(--bg, #101827);
+  border: 1px solid rgba(56, 189, 248, 0.32);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
-  animation: prompt-in 0.3s ease-out;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.48);
 }
 
 @keyframes prompt-in {

@@ -189,6 +189,7 @@
       go_forward:          'GO_FORWARD',
       user:                'USER',
       request_screenshot:  'REQUEST_SCREENSHOT',
+      request_user_input:  'USER',
       summarize_page:      'DONE',
       task_complete:       'DONE',
     };
@@ -200,7 +201,7 @@
       type:        internalType,
       data_hint:   action.target_id != null ? String(action.target_id) : null,
       element_id:  action.target_id != null ? String(action.target_id) : null,
-      text:        action.text   || raw.summary || null,
+      text:        action.text   || action.prompt || action.question || raw.summary || null,
       url:         action.url    || null,
       direction:   action.direction || null,
       reasoning:   action.summary || action.reasoning || raw.summary || null,
@@ -267,7 +268,8 @@
         }
         if (this._pending) return reject(new Error('A request is already in flight'));
         this._pending = { resolve, reject };
-        console.log('[PrivSight WS] Sending:', payload);
+        // Do not dump task text, DOM contents, screenshots, or form metadata.
+        console.log(`[PrivSight WS] Sending ${payload.type} (step ${payload.snapshot?.step ?? 'n/a'})`);
         this._ws.send(JSON.stringify(payload));
       });
     }
@@ -306,14 +308,16 @@
     },
 
     buildSnapshot(sessionId, step, elements, changedSinceLastStep, screenshotAvailable, screenshotB64) {
-      return {
+      const snapshot = {
         session_id:              String(sessionId),
         step,
         elements,
         changed_since_last_step: changedSinceLastStep || [],
         screenshot_available:    Boolean(screenshotAvailable),
-        screenshot_b64:          screenshotB64 || null,
       };
+      // Images leave the extension only in response to request_screenshot.
+      if (screenshotB64) snapshot.screenshot_b64 = screenshotB64;
+      return snapshot;
     },
 
     async postTaskStart({ sessionId, task, elements, screenshotAvailable }) {
@@ -342,23 +346,34 @@
       if (!_activeWsSession) throw new Error('postTaskScreenshot: no active WebSocket session');
       const effectiveTask = String(task || (_activeWsSession ? _activeWsSession.task : '') || '');
       const cleanB64 = (screenshotB64 || '').replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
-      const snapshot = this.buildSnapshot(sessionId, step, elements || [], [], true, cleanB64);
+      const snapshot = this.buildSnapshot(sessionId, step, this.toBackendElements(elements), [], true, cleanB64);
       const raw = await _activeWsSession.sendAndReceive({ type: 'screenshot', session_id: String(sessionId), task: effectiveTask, snapshot });
       return normaliseBackendResponse(raw);
     },
 
-    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64, step, changedSinceLastStep }) {
-      if (!sessionId) throw new Error('postTurn: sessionId is required');
-      const elements = (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
+    // Shared by /step and /screenshot so both send the same element schema.
+    toBackendElements(sanitizedDom) {
+      return (Array.isArray(sanitizedDom) ? sanitizedDom : []).map((el) => ({
         mark_id:          el.mark_id != null ? Number(el.mark_id) : Number(el.data_hint || 0),
         tag:              String(el.tag || 'div'),
         role:             el.role || null,
         input_type:       el.input_type || null,
         text:             el.text  != null ? el.text  : null,
-        value:            el.value != null ? el.value : null,
+        // Form values are intentionally excluded from backend snapshots.
+        value:            null,
+        name:             el.name || null,
+        placeholder:      el.placeholder || null,
+        aria_label:       el.aria_label || null,
+        disabled:         Boolean(el.disabled),
+        checked:          null,
         redacted:         Boolean(el.redacted),
         redaction_reason: el.redaction_reason || undefined,
       }));
+    },
+
+    async postTurn({ sessionId, taskGoal, sanitizedDom, sanitizedScreenshotB64, step, changedSinceLastStep }) {
+      if (!sessionId) throw new Error('postTurn: sessionId is required');
+      const elements = this.toBackendElements(sanitizedDom);
       const stepIndex = typeof step === 'number' ? step : 0;
       if (stepIndex === 0) {
         return this.postTaskStart({ sessionId, task: taskGoal || '', elements, screenshotAvailable: true });
