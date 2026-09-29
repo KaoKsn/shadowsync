@@ -1,0 +1,264 @@
+[
+  {
+    "id": "kyc-01",
+    "content": "Customer Ananya Sharma (PAN: ABCPS1234K) submitted Aadhaar 2345 6781 2346 for KYC verification on 12 March 2024. Registered mobile: +91 98765 43210, email ananya.sharma@gmail.com.",
+    "entities": [
+      { "type": "NAME", "value": "Ananya Sharma" },
+      { "type": "PAN", "value": "ABCPS1234K" },
+      { "type": "AADHAAR", "value": "2345 6781 2346" },
+      { "type": "PHONE", "value": "+91 98765 43210" },
+      { "type": "EMAIL", "value": "ananya.sharma@gmail.com" }
+    ],
+    "keep": ["12 March 2024", "KYC verification"]
+  },
+  {
+    "id": "bank-01",
+    "content": "Please transfer the refund to account number 50100234567891 at HDFC Bank, IFSC HDFC0001234. Beneficiary: Rahul Verma. UPI alternative: rahul.verma@okhdfcbank.",
+    "entities": [
+      { "type": "BANK_ACCOUNT", "value": "50100234567891" },
+      { "type": "IFSC", "value": "HDFC0001234" },
+      { "type": "NAME", "value": "Rahul Verma" },
+      { "type": "UPI", "value": "rahul.verma@okhdfcbank" }
+    ],
+    "keep": ["refund", "HDFC Bank"]
+  },
+  {
+    "id": "hr-01",
+    "content": "Employee Priya Nair, DOB 04/11/1992, joined on 01/06/2021. Emergency contact: her husband, Arjun Menon, reachable at 9812345670.",
+    "entities": [
+      { "type": "NAME", "value": "Priya Nair" },
+      { "type": "DOB", "value": "04/11/1992" },
+      { "type": "NAME", "value": "Arjun Menon" },
+      { "type": "PHONE", "value": "9812345670" }
+    ],
+    "keep": ["01/06/2021", "Emergency contact"]
+  },
+  {
+    "id": "gst-01",
+    "content": "Invoice INV-2024-00871 issued by Sharma Traders, GSTIN 29ABCPK1234F1Z1, for order #884120394. Total: ₹45,600.",
+    "entities": [
+      { "type": "GSTIN", "value": "29ABCPK1234F1Z1" }
+    ],
+    "keep": ["INV-2024-00871", "884120394", "₹45,600"]
+  },
+  {
+    "id": "medical-01",
+    "content": "Patient Mohammed Irfan (MRN: 88213476) was admitted to Apollo Hospital on 2 Feb 2024. Contact the ward at 080-2345 6789.",
+    "entities": [
+      { "type": "NAME", "value": "Mohammed Irfan" },
+      { "type": "MRN", "value": "88213476" },
+      { "type": "PHONE", "value": "080-2345 6789" }
+    ],
+    "keep": ["2 Feb 2024"]
+  },
+  {
+    "id": "travel-01",
+    "content": "Passport number K8765432 belongs to Sneha Reddy, born on 15 August 1988 in Hyderabad.",
+    "entities": [
+      { "type": "PASSPORT", "value": "K8765432" },
+      { "type": "NAME", "value": "Sneha Reddy" },
+      { "type": "DOB", "value": "15 August 1988" }
+    ],
+    "keep": []
+  },
+  {
+    "id": "voter-01",
+    "content": "Voter ID (EPIC) ABC1234567 was issued to Suresh Patil, S/o Ramesh Patil, residing at 14, MG Road, Pune 411001.",
+    "entities": [
+      { "type": "VOTER_ID", "value": "ABC1234567" },
+      { "type": "NAME", "value": "Suresh Patil" },
+      { "type": "NAME", "value": "Ramesh Patil" },
+      { "type": "ADDRESS", "value": "14, MG Road" },
+      { "type": "PINCODE", "value": "411001" }
+    ],
+    "keep": []
+  },
+  {
+    "id": "dl-01",
+    "content": "Driving licence MH12 20110012345 is valid till 2031. Vehicle MH 12 AB 1234 is registered to Kavita Joshi.",
+    "entities": [
+      { "type": "DRIVER_LICENSE", "value": "MH12 20110012345" },
+      { "type": "VEHICLE_REG", "value": "MH 12 AB 1234" },
+      { "type": "NAME", "value": "Kavita Joshi" }
+    ],
+    "keep": ["valid till 2031"]
+  },
+  {
+    "id": "card-01",
+    "content": "Payment of ₹2,499 was charged to RuPay card 6080 0123 4567 8903 (expiry 09/27, CVV 123). Transaction ID 4821930012.",
+    "entities": [
+      { "type": "CREDIT_CARD", "value": "6080 0123 4567 8903" },
+      { "type": "EXPIRY", "value": "09/27" },
+      { "type": "CVV", "value": "123" }
+    ],
+    "keep": ["₹2,499", "4821930012"]
+  },
+  {
+    "id": "support-01",
+    "content": "Hi, this is John Miller. My card 4111 1111 1111 1111 was declined. Please call me back at (415) 555-0132 or email john.miller@example.com.",
+    "entities": [
+      { "type": "NAME", "value": "John Miller" },
+      { "type": "CREDIT_CARD", "value": "4111 1111 1111 1111" },
+      { "type": "PHONE", "value": "(415) 555-0132" },
+      { "type": "EMAIL", "value": "john.miller@example.com" }
+    ],
+    "keep": ["was declined"]
+  },
+  {
+    "id": "it-01",
+    "content": "Login from 203.0.113.45 failed. API key: sk_live_51Hx9aBcDeFgHiJkLmNoPq was rotated.",
+    "entities": [
+      { "type": "IP_ADDRESS", "value": "203.0.113.45" },
+      { "type": "API_KEY", "value": "sk_live_51Hx9aBcDeFgHiJkLmNoPq" }
+    ],
+    "keep": ["was rotated"]
+  },
+  {
+    "id": "aadhaar-vid-01",
+    "content": "Use your Virtual ID 9123 4567 8901 2346 instead of sharing the Aadhaar number.",
+    "entities": [
+      { "type": "AADHAAR_VID", "value": "9123 4567 8901 2346" }
+    ],
+    "keep": ["Aadhaar number"]
+  },
+  {
+    "id": "contact-01",
+    "content": "Reach Farhan Qureshi on 07896 543210 or farhan.q@outlook.in; alternate +91-8123456789.",
+    "entities": [
+      { "type": "NAME", "value": "Farhan Qureshi" },
+      { "type": "PHONE", "value": "07896 543210" },
+      { "type": "EMAIL", "value": "farhan.q@outlook.in" },
+      { "type": "PHONE", "value": "+91-8123456789" }
+    ],
+    "keep": []
+  },
+  {
+    "id": "address-01",
+    "content": "Deliver to: Flat 302, Sai Krupa Apartments, 5th Cross, Indiranagar, Bengaluru, Karnataka 560038.",
+    "entities": [
+      { "type": "ADDRESS", "value": "Flat 302, Sai Krupa Apartments" },
+      { "type": "PINCODE", "value": "560038" }
+    ],
+    "keep": ["Deliver to"]
+  },
+  {
+    "id": "imei-01",
+    "content": "Device IMEI 352099001761481 was reported stolen by Neha Kapoor.",
+    "entities": [
+      { "type": "IMEI", "value": "352099001761481" },
+      { "type": "NAME", "value": "Neha Kapoor" }
+    ],
+    "keep": ["reported stolen"]
+  },
+  {
+    "id": "secrets-01",
+    "content": "Password hash for user 1024: $2b$12$KIXQJv8QwZ7m1fGhX9sPpeu3Yk1uWzH0aQ2c3d4e5f6g7h8i9j0kl",
+    "entities": [
+      { "type": "PASSWORD_HASH", "value": "$2b$12$KIXQJv8QwZ7m1fGhX9sPpeu3Yk1uWzH0aQ2c3d4e5f6g7h8i9j0kl" }
+    ],
+    "keep": ["user 1024"]
+  },
+  {
+    "id": "secrets-02",
+    "content": "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    "entities": [
+      { "type": "AUTH_TOKEN", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U" }
+    ],
+    "keep": ["Authorization"]
+  },
+  {
+    "id": "dob-01",
+    "content": "Date of birth: 1990-07-21. Policy start date: 2023-01-01.",
+    "entities": [
+      { "type": "DOB", "value": "1990-07-21" }
+    ],
+    "keep": ["2023-01-01"]
+  },
+  {
+    "id": "medical-02",
+    "content": "Diagnosed with Type 2 diabetes in 2019; currently on Metformin 500mg. Blood group: B+.",
+    "entities": [
+      { "type": "MEDICAL_CONDITION", "value": "Type 2 diabetes" },
+      { "type": "BLOOD_GROUP", "value": "B+" }
+    ],
+    "keep": ["in 2019"]
+  },
+  {
+    "id": "names-01",
+    "content": "Dr. Lakshmi Iyer reviewed the scan and referred the case to Dr. Venkatesh Rao at Manipal Hospital.",
+    "entities": [
+      { "type": "NAME", "value": "Lakshmi Iyer" },
+      { "type": "NAME", "value": "Venkatesh Rao" }
+    ],
+    "keep": ["reviewed the scan"]
+  },
+  {
+    "id": "names-02",
+    "content": "Thanks to Deepika, Vikram and Aishwarya for organising the offsite.",
+    "entities": [
+      { "type": "NAME", "value": "Deepika" },
+      { "type": "NAME", "value": "Vikram" },
+      { "type": "NAME", "value": "Aishwarya" }
+    ],
+    "keep": ["organising the offsite"]
+  },
+  {
+    "id": "names-03",
+    "content": "forwarding from rohit gupta: pls check the attached statement",
+    "entities": [
+      { "type": "NAME", "value": "rohit gupta" }
+    ],
+    "keep": ["attached statement"]
+  },
+  {
+    "id": "names-04",
+    "content": "The loan was co-signed by Gurpreet Singh Sandhu and witnessed by Thomas Mathew.",
+    "entities": [
+      { "type": "NAME", "value": "Gurpreet Singh Sandhu" },
+      { "type": "NAME", "value": "Thomas Mathew" }
+    ],
+    "keep": ["The loan was co-signed by"]
+  },
+  {
+    "id": "neg-01",
+    "content": "Order ID 234567812347 has been shipped via Blue Dart, tracking number 7890123456781. ISBN 978-3-16-148410-0.",
+    "entities": [],
+    "keep": ["234567812347", "7890123456781", "978-3-16-148410-0", "Blue Dart"]
+  },
+  {
+    "id": "neg-02",
+    "content": "Upgrade to version 10.2.3.4 fixes the crash. Build 2024.11.05 was released. See ticket JIRA-4521.",
+    "entities": [],
+    "keep": ["10.2.3.4", "2024.11.05", "JIRA-4521"]
+  },
+  {
+    "id": "neg-03",
+    "content": "Our new Sunny Side breakfast menu launches in May. Hope and Joy are our core values.",
+    "entities": [],
+    "keep": ["Sunny Side", "May", "Hope and Joy"]
+  },
+  {
+    "id": "neg-04",
+    "content": "The MR team will share samples; MR 2024 targets are attached. Mr. Right is a 2002 film.",
+    "entities": [],
+    "keep": ["MR 2024 targets", "Mr. Right", "2002 film"]
+  },
+  {
+    "id": "neg-05",
+    "content": "Part number 123-45-6789 is out of stock; reorder SKU 555-123-4567. Model AB12345678 ships next week.",
+    "entities": [],
+    "keep": ["123-45-6789", "555-123-4567", "AB12345678"]
+  },
+  {
+    "id": "neg-06",
+    "content": "Quarterly revenue grew 12.5% to ₹1,234,567,890. Meeting on 12/05/2024 at 10:30 in room 4B; call extension 4521.",
+    "entities": [],
+    "keep": ["₹1,234,567,890", "12/05/2024", "10:30", "4521"]
+  },
+  {
+    "id": "neg-07",
+    "content": "Reference number 9876543210123 and batch code RTN204 were logged. The PIN code field is optional.",
+    "entities": [],
+    "keep": ["9876543210123", "RTN204", "PIN code field"]
+  }
+]

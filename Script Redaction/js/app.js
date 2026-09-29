@@ -1,100 +1,180 @@
+import { PIIRedactor } from './redactor/index.js';
+import { NerClient } from './redactor/ner-client.js';
+import { formatTag } from './redactor/render.js';
+
 document.addEventListener('DOMContentLoaded', () => {
+  const $ = (id) => document.getElementById(id);
 
   // ============================================================
-  // NER STATUS: Monitor Compromise.js loading from CDN
+  // ENGINE + NER MODEL (runs in a Web Worker, loaded from ./models/)
   // ============================================================
-  const nerBadge = document.getElementById('ner-status');
-  const nerInlineText = document.getElementById('ner-inline-text');
-  const nerInlineHtml = document.getElementById('ner-inline-html');
+  const ner = new NerClient();
+  const redactor = new PIIRedactor().setNerBackend(ner);
 
-  function setNerStatus(active) {
-    if (active) {
-      nerBadge.textContent = 'NER: Active';
-      nerBadge.className = 'ner-badge ner-active';
-      nerInlineText.textContent = '+ NER';
-      nerInlineText.className = 'ner-inline ner-active';
-      nerInlineHtml.textContent = '+ NER';
-      nerInlineHtml.className = 'ner-inline ner-active';
-    } else {
-      nerBadge.textContent = 'NER: Offline';
-      nerBadge.className = 'ner-badge ner-offline';
-      nerInlineText.textContent = '';
-      nerInlineHtml.textContent = '';
+  const styleSel = $('style');
+  const sensitivitySel = $('sensitivity');
+  const useNer = $('use-ner');
+  const nerBadge = $('ner-status');
+
+  const updateBadge = ({ status, backend, progress, error }) => {
+    if (!useNer.checked) {
+      nerBadge.textContent = 'NER: Off';
+      nerBadge.className = 'ner-badge ner-loading';
+      nerBadge.title = 'Regex + checksum + name gazetteer only';
+      return;
     }
+    const labels = {
+      idle: ['NER: Idle', 'ner-loading'],
+      loading: [`NER: Loading ${Math.round(progress * 100)}%`, 'ner-loading'],
+      ready: [`NER: Active (${(backend || 'wasm').toUpperCase()})`, 'ner-active'],
+      error: ['NER: Offline', 'ner-offline'],
+    };
+    const [text, cls] = labels[status];
+    nerBadge.textContent = text;
+    nerBadge.className = `ner-badge ${cls}`;
+    nerBadge.title = error ? `${error}\nRun "npm run setup:ner" to download the model.` : '';
+  };
+  ner.onStatus(updateBadge);
+
+  // ============================================================
+  // ALLOW / DENY LISTS (kept in this browser only)
+  // ============================================================
+  const allowInput = $('allow-list');
+  const denyInput = $('deny-list');
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+  };
+  allowInput.value = store.get('pii.allow');
+  denyInput.value = store.get('pii.deny');
+
+  /** "/pattern/flags" -> RegExp, anything else -> plain string. Invalid regexes are ignored. */
+  function parseTerm(s) {
+    const m = /^\/(.+)\/([gimsuy]*)$/.exec(s);
+    if (!m) return s;
+    try { return new RegExp(m[1], m[2]); } catch (e) { return null; }
+  }
+  const lines = (el) => el.value.split('\n').map(l => l.trim()).filter(Boolean);
+  const allowList = () => lines(allowInput).map(parseTerm).filter(Boolean);
+  const denyList = () => lines(denyInput).map((line) => {
+    const m = /^([A-Z][A-Z0-9_]{1,30}):\s*(.+)$/.exec(line);
+    const value = parseTerm(m ? m[2] : line);
+    return value ? { value, type: m ? m[1] : 'CUSTOM' } : null;
+  }).filter(Boolean);
+
+  const options = () => ({
+    style: styleSel.value,
+    sensitivity: sensitivitySel.value,
+    allow: allowList(),
+    deny: denyList(),
+    ner: { enabled: useNer.checked && ner.status !== 'error' },
+  });
+
+  if (useNer.checked) ner.load().catch(() => {});
+
+  // ============================================================
+  // SHARED RENDERING
+  // ============================================================
+  function renderEntities(table, entities) {
+    const tbody = table.querySelector('tbody');
+    tbody.replaceChildren();
+    for (const e of entities) {
+      const tr = document.createElement('tr');
+      const where = e.where && e.where !== 'text' ? ` (${e.where})` : '';
+      for (const value of [e.type, e.text + where, e.score.toFixed(2), e.sources.join(' + '), (e.reasons || []).join('; ')]) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.hidden = entities.length === 0;
   }
 
-  // Compromise.js fires these events via the onload/onerror attributes in index.html
-  document.addEventListener('compromise-ready', () => setNerStatus(true));
-  document.addEventListener('compromise-failed', () => setNerStatus(false));
-  // If it was already loaded before DOMContentLoaded (cached)
-  if (window._compromiseLoaded === true) setNerStatus(true);
-  else if (window._compromiseLoaded === false) setNerStatus(false);
+  function stats(el, result, ms) {
+    const engine = result.nerUsed ? 'rules + NER' : 'rules only';
+    el.textContent = `${result.entities.length} entities · ${ms.toFixed(0)} ms · ${engine}`;
+  }
+
+  /** Redacted text with each replacement wrapped in a hoverable <mark>. */
+  function renderHighlighted(container, source, entities, style) {
+    container.replaceChildren();
+    let pos = 0;
+    for (const e of [...entities].sort((a, b) => a.start - b.start)) {
+      if (e.start > pos) container.appendChild(document.createTextNode(source.slice(pos, e.start)));
+      const mark = document.createElement('mark');
+      mark.className = 'pii';
+      mark.dataset.type = e.type;
+      mark.title = `${e.type} · score ${e.score.toFixed(2)} · ${e.sources.join(' + ')}\n- ${(e.reasons || []).join('\n- ')}`;
+      mark.textContent = formatTag(e.type, style, e.text);
+      container.appendChild(mark);
+      pos = e.end;
+    }
+    if (pos < source.length) container.appendChild(document.createTextNode(source.slice(pos)));
+  }
 
   // ============================================================
   // SECTION 1: TEXT REDACTION
   // ============================================================
-  const textInput = document.getElementById('text-input');
-  const textOutput = document.getElementById('text-output');
-  const textStyle = document.getElementById('text-style');
-  const btnRedactText = document.getElementById('btn-redact-text');
+  const textInput = $('text-input');
+  const textOutput = $('text-output');
+  let lastTextOutput = '';
 
-  function runTextRedaction() {
+  async function runTextRedaction() {
     const raw = textInput.value;
-    if (!raw) { textOutput.value = ''; return; }
-    const redactor = new PIIRedactor({ style: textStyle.value });
-    textOutput.value = redactor.redactText(raw);
+    if (!raw) {
+      textOutput.replaceChildren();
+      $('text-stats').textContent = '';
+      renderEntities($('text-entities'), []);
+      return;
+    }
+    const opts = options();
+    const t0 = performance.now();
+    const result = await redactor.redactTextAsync(raw, opts);
+    lastTextOutput = result.output;
+    renderHighlighted(textOutput, raw, result.entities, opts.style);
+    renderEntities($('text-entities'), result.entities);
+    stats($('text-stats'), result, performance.now() - t0);
   }
 
-  btnRedactText.addEventListener('click', runTextRedaction);
-  textStyle.addEventListener('change', runTextRedaction);
+  $('btn-redact-text').addEventListener('click', runTextRedaction);
+  $('btn-copy-text').addEventListener('click', () => {
+    if (lastTextOutput) navigator.clipboard.writeText(lastTextOutput).catch(() => {});
+  });
 
   // ============================================================
   // SECTION 2: HTML FILE REDACTION
   // ============================================================
-  const htmlUpload = document.getElementById('html-upload');
-  const htmlStyle = document.getElementById('html-style');
-  const origIframe = document.getElementById('orig-iframe');
-  const redactedIframe = document.getElementById('redacted-iframe');
-  const origCode = document.getElementById('orig-code');
-  const redactedCode = document.getElementById('redacted-code');
-  const btnDownloadHtml = document.getElementById('btn-download-html');
-  const toggleOrigCode = document.getElementById('toggle-orig-code');
-  const toggleRedactedCode = document.getElementById('toggle-redacted-code');
+  const origIframe = $('orig-iframe');
+  const redactedIframe = $('redacted-iframe');
+  const origCode = $('orig-code');
+  const redactedCode = $('redacted-code');
+  const btnDownloadHtml = $('btn-download-html');
 
   let currentRawHtml = '';
   let currentRedactedHtml = '';
   let uploadedFileName = 'redacted.html';
 
-  function renderIframe(iframe, htmlContent) {
-    const doc = iframe.contentDocument || iframe.contentWindow.document;
-    doc.open();
-    doc.write(htmlContent);
-    doc.close();
-  }
-
-  function processHtmlFile() {
+  async function processHtmlFile() {
     if (!currentRawHtml) return;
-
-    // Show original
-    renderIframe(origIframe, currentRawHtml);
+    origIframe.srcdoc = currentRawHtml;
     origCode.value = currentRawHtml;
 
-    // Run the 3-pass redaction pipeline
-    const redactor = new PIIRedactor({ style: htmlStyle.value });
-    currentRedactedHtml = redactor.redactHTML(currentRawHtml);
+    const t0 = performance.now();
+    const result = await redactor.redactHTMLAsync(currentRawHtml, options());
+    currentRedactedHtml = result.output;
 
-    // Display result
-    renderIframe(redactedIframe, currentRedactedHtml);
+    redactedIframe.srcdoc = currentRedactedHtml;
     redactedCode.value = currentRedactedHtml;
+    renderEntities($('html-entities'), result.entities);
+    stats($('html-stats'), result, performance.now() - t0);
     btnDownloadHtml.style.display = 'inline-block';
   }
 
-  htmlUpload.addEventListener('change', (e) => {
+  $('html-upload').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    uploadedFileName = file.name
-      ? file.name.replace(/\.html?$/i, '') + '-redacted.html'
-      : 'redacted.html';
+    uploadedFileName = file.name ? file.name.replace(/\.html?$/i, '') + '-redacted.html' : 'redacted.html';
     const reader = new FileReader();
     reader.onload = (event) => {
       currentRawHtml = event.target.result;
@@ -103,9 +183,6 @@ document.addEventListener('DOMContentLoaded', () => {
     reader.readAsText(file);
   });
 
-  htmlStyle.addEventListener('change', processHtmlFile);
-
-  // Download redacted HTML
   btnDownloadHtml.addEventListener('click', () => {
     if (!currentRedactedHtml) return;
     const blob = new Blob([currentRedactedHtml], { type: 'text/html' });
@@ -119,18 +196,29 @@ document.addEventListener('DOMContentLoaded', () => {
     URL.revokeObjectURL(url);
   });
 
-  // Toggle between preview and raw code view
-  toggleOrigCode.addEventListener('click', () => {
-    const showingCode = origCode.style.display !== 'none';
-    origCode.style.display = showingCode ? 'none' : 'block';
-    origIframe.style.display = showingCode ? 'block' : 'none';
-    toggleOrigCode.textContent = showingCode ? 'View Code' : 'View Preview';
-  });
+  function toggleCode(button, code, iframe) {
+    button.addEventListener('click', () => {
+      const showingCode = code.style.display !== 'none';
+      code.style.display = showingCode ? 'none' : 'block';
+      iframe.style.display = showingCode ? 'block' : 'none';
+      button.textContent = showingCode ? 'View Code' : 'View Preview';
+    });
+  }
+  toggleCode($('toggle-orig-code'), origCode, origIframe);
+  toggleCode($('toggle-redacted-code'), redactedCode, redactedIframe);
 
-  toggleRedactedCode.addEventListener('click', () => {
-    const showingCode = redactedCode.style.display !== 'none';
-    redactedCode.style.display = showingCode ? 'none' : 'block';
-    redactedIframe.style.display = showingCode ? 'block' : 'none';
-    toggleRedactedCode.textContent = showingCode ? 'View Code' : 'View Preview';
+  // ============================================================
+  // SETTINGS: re-run both sections when anything changes
+  // ============================================================
+  const rerun = () => { runTextRedaction(); processHtmlFile(); };
+  styleSel.addEventListener('change', rerun);
+  sensitivitySel.addEventListener('change', rerun);
+  for (const [el, key] of [[allowInput, 'pii.allow'], [denyInput, 'pii.deny']]) {
+    el.addEventListener('change', () => { store.set(key, el.value); rerun(); });
+  }
+  useNer.addEventListener('change', () => {
+    if (useNer.checked) ner.load().catch(() => {});
+    updateBadge(ner.state);
+    rerun();
   });
 });

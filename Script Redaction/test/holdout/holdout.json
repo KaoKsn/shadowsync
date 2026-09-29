@@ -1,0 +1,193 @@
+[
+  {
+    "id": "ho-chat-01",
+    "kind": "text",
+    "content": "[10:42] Agent: Can you confirm your registered number?\n[10:43] Customer: yes its 9988776655 and my aadhar is 617283940516\n[10:44] Agent: Thanks Mr. Bhupinder Hooda, verified.",
+    "entities": [
+      { "type": "PHONE", "value": "9988776655" },
+      { "type": "AADHAAR", "value": "617283940516" },
+      { "type": "NAME", "value": "Bhupinder Hooda" }
+    ],
+    "keep": ["[10:42]", "registered number", "verified"]
+  },
+  {
+    "id": "ho-signature-01",
+    "kind": "text",
+    "content": "Regards,\nTenzin Dolma\nSenior Analyst | Finance\nM: +91 (80) 4123 4567 | tenzin.dolma@acmecorp.co.in",
+    "entities": [
+      { "type": "NAME", "value": "Tenzin Dolma" },
+      { "type": "PHONE", "value": "+91 (80) 4123 4567" },
+      { "type": "EMAIL", "value": "tenzin.dolma@acmecorp.co.in" }
+    ],
+    "keep": ["Senior Analyst", "Finance"]
+  },
+  {
+    "id": "ho-form-text-01",
+    "kind": "text",
+    "content": "Applicant Name: Harshita Bhardwaj\nFather's Name: Sanjeev Bhardwaj\nDOB: 12.05.1987\nPAN No: AMBPG7773M\nGST No: 36AMBPG7773M1ZL\nCategory: General",
+    "entities": [
+      { "type": "NAME", "value": "Harshita Bhardwaj" },
+      { "type": "NAME", "value": "Sanjeev Bhardwaj" },
+      { "type": "DOB", "value": "12.05.1987" },
+      { "type": "PAN", "value": "AMBPG7773M" },
+      { "type": "GSTIN", "value": "36AMBPG7773M1ZL" }
+    ],
+    "keep": ["Category: General"]
+  },
+  {
+    "id": "ho-csv-01",
+    "kind": "text",
+    "content": "id,name,email,phone,city\n101,Pooja Iyer,pooja.iyer@mail.com,9876501234,Chennai\n102,Rakesh Yadav,rakesh.y@mail.com,9123409876,Lucknow",
+    "entities": [
+      { "type": "NAME", "value": "Pooja Iyer" },
+      { "type": "EMAIL", "value": "pooja.iyer@mail.com" },
+      { "type": "PHONE", "value": "9876501234" },
+      { "type": "NAME", "value": "Rakesh Yadav" },
+      { "type": "EMAIL", "value": "rakesh.y@mail.com" },
+      { "type": "PHONE", "value": "9123409876" }
+    ],
+    "keep": ["id,name,email,phone,city", "101", "102"]
+  },
+  {
+    "id": "ho-bank-01",
+    "kind": "text",
+    "content": "NEFT of Rs. 12,000 credited to A/c No. 002301567890 (ICIC0000023) on 05-Mar-2024. UTR: ICICR52024030500012345. Card 5522 0000 1111 2222 was not used.",
+    "entities": [
+      { "type": "BANK_ACCOUNT", "value": "002301567890" },
+      { "type": "IFSC", "value": "ICIC0000023" },
+      { "type": "CREDIT_CARD", "value": "5522 0000 1111 2222" }
+    ],
+    "keep": ["Rs. 12,000", "05-Mar-2024", "ICICR52024030500012345"]
+  },
+  {
+    "id": "ho-medical-01",
+    "kind": "text",
+    "content": "Pt. Ramakrishnan S, 64M, UHID 20240311-0457, known case of hypertension. Blood Group O-ve. Next review with Dr. Meenakshi Sundaram on 18/03/2024.",
+    "entities": [
+      { "type": "NAME", "value": "Ramakrishnan S" },
+      { "type": "MRN", "value": "20240311-0457" },
+      { "type": "BLOOD_GROUP", "value": "O-ve" },
+      { "type": "NAME", "value": "Meenakshi Sundaram" }
+    ],
+    "keep": ["18/03/2024", "Next review with"]
+  },
+  {
+    "id": "ho-upi-01",
+    "kind": "text",
+    "content": "Split the bill! Send ₹450 to karthik.s@oksbi or scan the QR. Questions? support@splitwise.com",
+    "entities": [
+      { "type": "UPI", "value": "karthik.s@oksbi" },
+      { "type": "EMAIL", "value": "support@splitwise.com" }
+    ],
+    "keep": ["₹450", "scan the QR"]
+  },
+  {
+    "id": "ho-log-01",
+    "kind": "text",
+    "content": "2024-03-05 10:22:31 INFO user=alice.w@example.org ip=192.168.10.24 action=login token=eyJhbGciOiJSUzI1NiJ9.eyJ1aWQiOjQyfQ.c2lnbmF0dXJl status=200",
+    "entities": [
+      { "type": "EMAIL", "value": "alice.w@example.org" },
+      { "type": "IP_ADDRESS", "value": "192.168.10.24" },
+      { "type": "AUTH_TOKEN", "value": "eyJhbGciOiJSUzI1NiJ9.eyJ1aWQiOjQyfQ.c2lnbmF0dXJl" }
+    ],
+    "keep": ["2024-03-05 10:22:31", "action=login", "status=200"]
+  },
+  {
+    "id": "ho-neg-01",
+    "kind": "text",
+    "content": "We have a PAN India presence with 18% GST on services. Claim deductions under Section 80C and file Form 16 by 31 July. Call centre hours: 9 to 6.",
+    "entities": [],
+    "keep": ["PAN India presence", "18% GST", "Section 80C", "Form 16", "31 July", "9 to 6"]
+  },
+  {
+    "id": "ho-neg-02",
+    "kind": "text",
+    "content": "Color #1A2B3C, UUID 550e8400-e29b-41d4-a716-446655440000, coordinates 12.9716, 77.5946, stock at 1,234.50 and Nifty closed at 22,055.70.",
+    "entities": [],
+    "keep": ["#1A2B3C", "550e8400-e29b-41d4-a716-446655440000", "12.9716, 77.5946", "1,234.50", "22,055.70"]
+  },
+  {
+    "id": "ho-neg-03",
+    "kind": "text",
+    "content": "Train 12627 Karnataka Express departs at 19:20 from platform 5. PNR 4521367890 is confirmed for coach B2, berth 34.",
+    "entities": [],
+    "keep": ["12627", "Karnataka Express", "19:20", "4521367890", "B2"]
+  },
+  {
+    "id": "ho-neg-04",
+    "kind": "text",
+    "content": "Will the Grace period apply? Mark the form and Bill it to April's budget. Rose Garden opens in May.",
+    "entities": [],
+    "keep": ["Will the Grace period", "Mark the form", "Bill it", "April", "Rose Garden", "May"]
+  },
+  {
+    "id": "ho-names-01",
+    "kind": "text",
+    "content": "Minutes: Siddharth proposed the plan; Nandini and Oluwaseun agreed. Action item for Chen Wei: share the draft with Kavya.",
+    "entities": [
+      { "type": "NAME", "value": "Siddharth" },
+      { "type": "NAME", "value": "Nandini" },
+      { "type": "NAME", "value": "Oluwaseun" },
+      { "type": "NAME", "value": "Chen Wei" },
+      { "type": "NAME", "value": "Kavya" }
+    ],
+    "keep": ["proposed the plan", "Action item", "share the draft"]
+  },
+  {
+    "id": "ho-address-01",
+    "kind": "text",
+    "content": "Registered office: No. 45/2, 3rd Main Road, Jayanagar 4th Block, Bangalore - 560011. Branch: Plot 17, Sector 62, Noida 201301.",
+    "entities": [
+      { "type": "ADDRESS", "value": "45/2, 3rd Main Road" },
+      { "type": "PINCODE", "value": "560011" },
+      { "type": "ADDRESS", "value": "Plot 17, Sector 62" },
+      { "type": "PINCODE", "value": "201301" }
+    ],
+    "keep": ["Registered office"]
+  },
+  {
+    "id": "ho-html-profile",
+    "kind": "html",
+    "content": "<div class=\"profile\"><h3>My Profile</h3><p><span>Name:</span> <span>Aditi Kulkarni</span></p><p><span>Email:</span> <a href=\"mailto:aditi.k@proton.me\">aditi.k@proton.me</a></p><p><span>Phone:</span> <span>+91 90040 11223</span></p><p><span>Aadhaar:</span> <span>9283 7465 0195</span></p><p><span>Member since:</span> <span>2019</span></p></div>",
+    "entities": [
+      { "type": "NAME", "value": "Aditi Kulkarni" },
+      { "type": "EMAIL", "value": "aditi.k@proton.me" },
+      { "type": "PHONE", "value": "+91 90040 11223" },
+      { "type": "AADHAAR", "value": "9283 7465 0195" }
+    ],
+    "keep": ["My Profile", "Member since", "2019"]
+  },
+  {
+    "id": "ho-html-invoice",
+    "kind": "html",
+    "content": "<table><tr><td><b>Bill To</b><br>Vivek Anand<br>22, Residency Road<br>Bengaluru 560025</td><td><b>Invoice #</b> INV-8812<br><b>GSTIN</b> 24AAHCS2781A1ZN<br><b>Date</b> 04/03/2024</td></tr></table>",
+    "entities": [
+      { "type": "NAME", "value": "Vivek Anand" },
+      { "type": "ADDRESS", "value": "22, Residency Road" },
+      { "type": "PINCODE", "value": "560025" },
+      { "type": "GSTIN", "value": "24AAHCS2781A1ZN" }
+    ],
+    "keep": ["Bill To", "INV-8812", "04/03/2024"]
+  },
+  {
+    "id": "ho-html-comments",
+    "kind": "html",
+    "content": "<ul class=\"comments\"><li><strong>deepak_r</strong> wrote: call me on 8105512345 if the parcel doesn't arrive</li><li><strong>Anjali M.</strong> wrote: my card ending in 4417 was charged twice</li><li><strong>admin</strong> wrote: please don't share personal info here</li></ul>",
+    "entities": [
+      { "type": "PHONE", "value": "8105512345" },
+      { "type": "NAME", "value": "Anjali M." },
+      { "type": "CREDIT_CARD", "value": "4417" }
+    ],
+    "keep": ["wrote:", "parcel doesn't arrive", "admin", "personal info"]
+  },
+  {
+    "id": "ho-html-hidden",
+    "kind": "html",
+    "content": "<form action=\"/save\"><input type=\"hidden\" name=\"user_email\" value=\"ravi.teja@gmail.com\"><input type=\"text\" name=\"pan\" value=\"AAHCS2781A\"><input type=\"text\" name=\"coupon\" value=\"SAVE20\"><button>Save</button></form>",
+    "entities": [
+      { "type": "EMAIL", "value": "ravi.teja@gmail.com" },
+      { "type": "PAN", "value": "AAHCS2781A" }
+    ],
+    "keep": ["SAVE20", "Save"]
+  }
+]

@@ -1,0 +1,83 @@
+[
+  {
+    "id": "html-row-table",
+    "content": "<table><tr><th>Field</th><th>Value</th></tr><tr><td>Full Name</td><td>Aarav Mehta</td></tr><tr><td>Aadhaar Number</td><td>4987 1203 4560</td></tr><tr><td>PAN</td><td>BNZPM2501F</td></tr><tr><td>Mobile</td><td>+91 99887 66554</td></tr><tr><td>Date of Birth</td><td>21-09-1985</td></tr><tr><td>Status</td><td>Verified</td></tr></table>",
+    "entities": [
+      { "type": "NAME", "value": "Aarav Mehta" },
+      { "type": "AADHAAR", "value": "4987 1203 4560" },
+      { "type": "PAN", "value": "BNZPM2501F" },
+      { "type": "PHONE", "value": "+91 99887 66554" },
+      { "type": "DOB", "value": "21-09-1985" }
+    ],
+    "keep": ["Field", "Value", "Full Name", "Aadhaar Number", "Status", "Verified"]
+  },
+  {
+    "id": "html-split-inline",
+    "content": "<p>Aadhaar: <b>7890</b> <b>1234</b> <b>5674</b> is linked to <strong>Kiran</strong> <em>Desai</em>.</p>",
+    "entities": [
+      { "type": "AADHAAR", "value": "7890 1234 5674" },
+      { "type": "NAME", "value": "Kiran Desai" }
+    ],
+    "keep": ["is linked to"]
+  },
+  {
+    "id": "html-label-value",
+    "content": "<div class=\"field\"><span class=\"label\">Email</span><span class=\"value\">meera.pillai@yahoo.co.in</span></div><div class=\"field\"><span class=\"label\">UPI ID</span><span class=\"value\">meera@ybl</span></div><div class=\"field\"><span class=\"label\">IFSC</span><span class=\"value\">SBIN0004567</span></div><div class=\"field\"><span class=\"label\">Account Number</span><span class=\"value\">32145678901</span></div><div class=\"field\"><span class=\"label\">Account Type</span><span class=\"value\">Savings</span></div>",
+    "entities": [
+      { "type": "EMAIL", "value": "meera.pillai@yahoo.co.in" },
+      { "type": "UPI", "value": "meera@ybl" },
+      { "type": "IFSC", "value": "SBIN0004567" },
+      { "type": "BANK_ACCOUNT", "value": "32145678901" }
+    ],
+    "keep": ["Email", "UPI ID", "Account Number", "Account Type", "Savings"]
+  },
+  {
+    "id": "html-inputs",
+    "content": "<form><label for=\"n\">Name</label><input id=\"n\" value=\"Rohan Das\"><label for=\"p\">Phone</label><input id=\"p\" value=\"9123456780\"><input type=\"submit\" value=\"Submit\"></form>",
+    "entities": [
+      { "type": "NAME", "value": "Rohan Das" },
+      { "type": "PHONE", "value": "9123456780" }
+    ],
+    "keep": ["Submit", "Phone"]
+  },
+  {
+    "id": "html-discharge",
+    "content": "<h2>Discharge Summary</h2><p>Patient <strong>Fatima Sheikh</strong>, MRN 55821934, was discharged on 03/03/2024. Follow-up with Dr. Anil Kumar.</p><p>Contact: <a href=\"mailto:fatima.s@gmail.com\">fatima.s@gmail.com</a></p>",
+    "entities": [
+      { "type": "NAME", "value": "Fatima Sheikh" },
+      { "type": "MRN", "value": "55821934" },
+      { "type": "NAME", "value": "Anil Kumar" },
+      { "type": "EMAIL", "value": "fatima.s@gmail.com" }
+    ],
+    "keep": ["Discharge Summary", "03/03/2024", "Follow-up with"]
+  },
+  {
+    "id": "html-negatives",
+    "content": "<ul><li>Order #234567812347</li><li>Version 10.2.3.4</li><li>SKU 555-123-4567</li><li>Invoice INV-99812</li><li>Model AB12345678</li></ul>",
+    "entities": [],
+    "keep": ["234567812347", "10.2.3.4", "555-123-4567", "INV-99812", "AB12345678"]
+  },
+  {
+    "id": "html-column-table",
+    "content": "<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Team</th></tr></thead><tbody><tr><td>Ishaan Malhotra</td><td>ishaan.m@company.in</td><td>98450 12345</td><td>Platform</td></tr><tr><td>Zoya Khan</td><td>zoya.khan@company.in</td><td>97401 55667</td><td>Design</td></tr></tbody></table>",
+    "entities": [
+      { "type": "NAME", "value": "Ishaan Malhotra" },
+      { "type": "EMAIL", "value": "ishaan.m@company.in" },
+      { "type": "PHONE", "value": "98450 12345" },
+      { "type": "NAME", "value": "Zoya Khan" },
+      { "type": "EMAIL", "value": "zoya.khan@company.in" },
+      { "type": "PHONE", "value": "97401 55667" }
+    ],
+    "keep": ["Name", "Email", "Phone", "Team", "Platform", "Design"]
+  },
+  {
+    "id": "html-dl-list",
+    "content": "<dl><dt>Passport No.</dt><dd>M2345678</dd><dt>GSTIN</dt><dd>07AAACR5055K1Z9</dd><dt>Voter ID</dt><dd>XYZ7654321</dd><dt>Nationality</dt><dd>Indian</dd></dl>",
+    "entities": [
+      { "type": "PASSPORT", "value": "M2345678" },
+      { "type": "GSTIN", "value": "07AAACR5055K1Z9" },
+      { "type": "VOTER_ID", "value": "XYZ7654321" }
+    ],
+    "keep": ["Passport No.", "GSTIN", "Voter ID"]
+  }
+]
