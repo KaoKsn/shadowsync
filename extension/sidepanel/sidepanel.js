@@ -122,6 +122,9 @@
     userPromptText:  $('ps-user-prompt-text'),
     resumeBtn:       $('ps-resume-btn'),
     cancelBtn:       $('ps-cancel-btn'),
+    userPromptTitle: $('ps-user-prompt-title'),
+    autofillYesBtn:  $('ps-autofill-yes'),
+    autofillNoBtn:   $('ps-autofill-no'),
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -387,6 +390,49 @@
     });
   }
 
+  /**
+   * Messages the page's autofill module; resolves null if it isn't there.
+   * Time-limited: agent.js keeps every message channel open (`return true`),
+   * so if autofill isn't running in the tab (e.g. a tab open before an
+   * extension reload) no reply would ever come and the pause would hang.
+   */
+  function sendAutofillMessage(tabId, type, timeoutMs = 1500) {
+    return new Promise((resolve) => {
+      if (!tabId) return resolve(null);
+      const timer = setTimeout(() => resolve(null), timeoutMs);
+      chrome.tabs.sendMessage(tabId, { type }, (response) => {
+        clearTimeout(timer);
+        resolve(chrome.runtime.lastError || !response?.ok ? null : response);
+      });
+    });
+  }
+
+  /** Swaps the prompt between the Yes/No autofill question and OK/Stop. */
+  function showAutofillQuestion(visible) {
+    const show = (node, on) => { if (node) node.style.display = on ? '' : 'none'; };
+    show(el.autofillYesBtn, visible);
+    show(el.autofillNoBtn, visible);
+    show(el.resumeBtn, !visible);
+    show(el.cancelBtn, !visible);
+    if (el.userPromptTitle) el.userPromptTitle.textContent = visible ? 'Autofill this page?' : 'Your input is needed';
+  }
+
+  /** Resolves 'yes' | 'no' from the prompt buttons (or 'ended' via `ended`). */
+  function askAutofill(ended) {
+    return new Promise((resolve) => {
+      const done = (answer) => {
+        el.autofillYesBtn?.removeEventListener('click', onYes);
+        el.autofillNoBtn?.removeEventListener('click', onNo);
+        resolve(answer);
+      };
+      const onYes = () => done('yes');
+      const onNo = () => done('no');
+      el.autofillYesBtn?.addEventListener('click', onYes);
+      el.autofillNoBtn?.addEventListener('click', onNo);
+      ended.then(() => done('ended'));
+    });
+  }
+
   async function pauseForHumanInput(instruction) {
     const tabId = activeTabId;
     updateAgentStatus('user_action');
@@ -400,13 +446,41 @@
       el.resumeBtn.disabled = false;
     }
     if (el.cancelBtn) el.cancelBtn.textContent = 'Stop';
-    if (el.userPrompt) el.userPrompt.style.display = 'flex';
 
     const resultPromise = waitForHumanFormSubmission(tabId);
     // Watch for the submit immediately; the user may submit without clicking OK.
     if (tabId) chrome.tabs.sendMessage(tabId, { type: 'ARM_HUMAN_SUBMIT' }, () => void chrome.runtime.lastError);
+
+    // Ask before filling anything from the profile on a page handed to the user.
+    // Only field names come back from the page, never profile values.
+    const offer = await sendAutofillMessage(tabId, 'PII_AUTOFILL_PREVIEW');
+    if (offer?.count > 0) {
+      if (el.userPromptText) {
+        el.userPromptText.textContent =
+          `PrivSight can fill ${offer.labels.join(', ')} on this page from your saved profile. ` +
+          'Passwords and one-time codes are never filled — you enter those yourself.';
+      }
+      showAutofillQuestion(true);
+      if (el.userPrompt) el.userPrompt.style.display = 'flex';
+
+      const answer = await askAutofill(resultPromise);
+      showAutofillQuestion(false);
+      if (answer === 'yes') {
+        const filled = await sendAutofillMessage(tabId, 'PII_AUTOFILL_CONSENT_FILL');
+        if (el.userPromptText) {
+          el.userPromptText.textContent = filled?.count
+            ? `Filled ${filled.labels.join(', ')} from your profile. Check it, enter anything else (like your password) on the page, then submit. PrivSight will resume after submission.`
+            : instruction;
+        }
+      } else if (el.userPromptText) {
+        el.userPromptText.textContent = instruction;
+      }
+    }
+    if (el.userPrompt) el.userPrompt.style.display = 'flex';
+
     const result = await resultPromise;
     isLoopPausedForUser = false;
+    showAutofillQuestion(false);
     if (el.userPrompt) el.userPrompt.style.display = 'none';
     if (el.resumeBtn) {
       el.resumeBtn.textContent = 'OK';

@@ -101,14 +101,104 @@
     return new RegExp(`(?<![\\p{L}\\p{N}])(?:${list.join("|")})(?![\\p{L}\\p{N}])`, "gu");
   }
 
+  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const WORD_BOUNDED = (body, flags) =>
+    new RegExp(`(?<![\\p{L}\\p{N}])(?:${body})(?![\\p{L}\\p{N}])`, flags);
+
+  /**
+   * Compiles the user's own key → value profile into matchers that find those
+   * exact values anywhere in page text. Works for any keys; nothing here knows
+   * which fields exist. Values are matched case-insensitively with flexible
+   * whitespace; number-like values (phones, IDs) also match with any
+   * separators, and a value with a country code also matches its last 10 digits.
+   *
+   * @param {Object<string,string>} profile
+   * @param {{skipKeys?: string[], nameKeys?: string[]}} [options]
+   *   skipKeys: keys never redacted (generic values); nameKeys: keys whose
+   *   individual words (≥3 letters, as capitalised in the profile) are also masked.
+   * @returns {{value: RegExp|null, valueKeys: string[], word: RegExp|null, wordKeys: string[]}|null}
+   */
+  function compileProfile(profile, options = {}) {
+    if (!profile || typeof profile !== "object") return null;
+    const skip = new Set(options.skipKeys || []);
+    const nameKeys = new Set(options.nameKeys || []);
+    const values = []; // { key, pattern, len }
+    const words = [];
+    const seen = new Set();
+
+    const add = (list, key, pattern, len) => {
+      if (seen.has(pattern)) return;
+      seen.add(pattern);
+      list.push({ key, pattern, len });
+    };
+
+    for (const [key, raw] of Object.entries(profile)) {
+      if (skip.has(key) || typeof raw !== "string") continue;
+      const value = raw.trim();
+      if (value.length < 3) continue;
+
+      const digits = value.replace(/\D/g, "");
+      if (/^[+\d\s().\-/]+$/.test(value)) {
+        // Number-like: match the digit sequence with any separators between digits
+        if (digits.length < 4) continue;
+        const flex = (d) => d.split("").join("[\\s.()\\-/]*");
+        add(values, key, flex(digits), digits.length);
+        if (digits.length > 10) add(values, key, flex(digits.slice(-10)), 10);
+        continue;
+      }
+
+      add(values, key, escapeRegex(value).replace(/\s+/g, "\\s+"), value.length);
+
+      if (nameKeys.has(key)) {
+        value.split(/\s+/)
+          .filter((w) => w.length >= 3 && /^\p{Lu}/u.test(w))
+          .forEach((w) => add(words, key, escapeRegex(w), w.length));
+      }
+    }
+
+    // Longest first so "John Doe" is replaced whole before "John"
+    const build = (list, flags) => {
+      if (!list.length) return { re: null, keys: [] };
+      list.sort((a, b) => b.len - a.len);
+      return {
+        re: WORD_BOUNDED(list.map((v) => `(${v.pattern})`).join("|"), flags),
+        keys: list.map((v) => v.key),
+      };
+    };
+    const v = build(values, "giu");
+    const w = build(words, "gu"); // case-sensitive: "Will" the name, not "will" the verb
+    if (!v.re && !w.re) return null;
+    return { value: v.re, valueKeys: v.keys, word: w.re, wordKeys: w.keys };
+  }
+
+  /** Replaces profile matches; records a count per profile key (never the value). */
+  function redactProfile(text, stats, profile) {
+    const pass = (input, re, keys) => {
+      if (!re) return input;
+      return input.replace(re, (...args) => {
+        const groups = args.slice(1, keys.length + 1);
+        const key = keys[groups.findIndex((g) => g !== undefined)];
+        if (stats) {
+          if (stats.profile !== undefined) stats.profile++;
+          if (stats.profileMatches && key) {
+            stats.profileMatches[key] = (stats.profileMatches[key] || 0) + 1;
+          }
+        }
+        return "[REDACTED]";
+      });
+    };
+    return pass(pass(text, profile.value, profile.valueKeys), profile.word, profile.wordKeys);
+  }
+
   /**
    * Redacts PII in a given text string.
    * @param {string} text
    * @param {object} stats - Counter object to track redactions by type
    * @param {RegExp|null} [terms] - Extra PII strings from compileTerms()
+   * @param {object|null} [profile] - The user's own values, from compileProfile()
    * @returns {string} Redacted text
    */
-  function redactString(text, stats, terms) {
+  function redactString(text, stats, terms, profile) {
     if (!text || typeof text !== "string") return text;
 
     let result = text;
@@ -119,7 +209,13 @@
       }
     }
 
-    // Engine/NER entities first: they were detected on the original, unredacted text
+    // The user's own profile values first: exact, known data, matched before
+    // the generic patterns below can split a value into partial redactions
+    if (profile) {
+      result = redactProfile(result, stats, profile);
+    }
+
+    // Engine/NER entities next: they were detected on the original, unredacted text
     if (terms) {
       result = result.replace(terms, () => {
         recordRedaction("entity");
@@ -242,18 +338,18 @@
    * @param {string} href
    * @param {object} stats
    */
-  function redactHref(href, stats, terms) {
+  function redactHref(href, stats, terms, profile) {
     if (!href) return href;
     if (href.startsWith("mailto:")) {
       const emailPart = href.substring(7);
-      const redactedEmail = redactString(emailPart, stats, terms);
+      const redactedEmail = redactString(emailPart, stats, terms, profile);
       return "mailto:" + redactedEmail;
     }
     if (href.startsWith("tel:")) {
       if (stats && stats.phone !== undefined) stats.phone++;
       return "tel:[REDACTED]";
     }
-    return redactString(href, stats, terms);
+    return redactString(href, stats, terms, profile);
   }
 
   class DOMRedactor {
@@ -482,12 +578,18 @@
      * Records all modifications in an undoList and tracks PII stats.
      * Skips extension overlay elements and script/style tags.
      * @param {Node} rootNode
-     * @param {{extraTerms?: string[]}} [opts] - extraTerms: PII strings from the offscreen engine
-     * @returns {{undoList: Array<object>, stats: object}}
+     * @param {{extraTerms?: string[], profile?: object}} [opts]
+     *   extraTerms: PII strings from the offscreen engine;
+     *   profile: the user's own values, compiled with DOMRedactor.compileProfile()
+     * @returns {{undoList: Array<object>, stats: object, profileMatches: Object<string,number>}}
+     *   profileMatches: redaction count per profile key (keys only, no values)
      */
     redactLiveDOM(rootNode = (document.body || document.documentElement), opts = {}) {
       const terms = compileTerms(opts.extraTerms);
+      const profile = opts.profile || null;
+      const profileMatches = {};
       const stats = {
+        profile: 0,
         entity: 0,
         password: 0,
         aadhaar: 0,
@@ -505,6 +607,9 @@
         apiKey: 0,
         total: 0,
       };
+      // Non-enumerable so the per-type totals below (and callers summing
+      // numeric stats) never see it
+      Object.defineProperty(stats, "profileMatches", { value: profileMatches });
       const undoList = [];
 
       const traverse = (node) => {
@@ -529,7 +634,7 @@
         if (node.nodeType === Node.TEXT_NODE) {
           if (this.options.redactTextNodes && node.nodeValue) {
             const originalVal = node.nodeValue;
-            const redactedVal = redactString(originalVal, stats, terms);
+            const redactedVal = redactString(originalVal, stats, terms, profile);
             if (redactedVal !== originalVal) {
               node.nodeValue = redactedVal;
               undoList.push({ type: "text", node, value: originalVal });
@@ -620,14 +725,14 @@
                 }
               } else {
                 if (originalPropValue) {
-                  const redacted = redactString(originalPropValue, stats, terms);
+                  const redacted = redactString(originalPropValue, stats, terms, profile);
                   if (redacted !== originalPropValue) {
                     node.value = redacted;
                     changed = true;
                   }
                 }
                 if (hadAttr && originalAttrValue) {
-                  const redactedAttr = redactString(originalAttrValue, stats, terms);
+                  const redactedAttr = redactString(originalAttrValue, stats, terms, profile);
                   if (redactedAttr !== originalAttrValue) {
                     node.setAttribute("value", redactedAttr);
                     changed = true;
@@ -653,9 +758,9 @@
               const originalVal = node.getAttribute(attrName);
               let redactedVal;
               if (attrName === "href") {
-                redactedVal = redactHref(originalVal, stats, terms);
+                redactedVal = redactHref(originalVal, stats, terms, profile);
               } else {
-                redactedVal = redactString(originalVal, stats, terms);
+                redactedVal = redactString(originalVal, stats, terms, profile);
               }
               if (redactedVal !== originalVal) {
                 node.setAttribute(attrName, redactedVal);
@@ -683,7 +788,7 @@
         .filter((k) => k !== "total")
         .reduce((acc, curr) => acc + stats[curr], 0);
 
-      return { undoList, stats };
+      return { undoList, stats, profileMatches };
     }
 
     /**
@@ -746,6 +851,7 @@
   DOMRedactor.isValidLuhn = isValidLuhn;
   DOMRedactor.redactString = redactString;
   DOMRedactor.compileTerms = compileTerms;
+  DOMRedactor.compileProfile = compileProfile;
 
   return DOMRedactor;
 });

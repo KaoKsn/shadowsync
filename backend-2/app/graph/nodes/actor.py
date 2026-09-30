@@ -8,7 +8,7 @@ from ...prompts import ACTOR_SYSTEM, render_actor_context
 from ...schemas import AgentAction
 from ...tools import ACTION_TOOL_NAMES, TOOLS
 from ...vision import compress_image
-from ._common import advance_plan, append_memory, describe_action, screenshot_allowed
+from ._common import advance_plan, append_memory, describe_action, loop_error, read_allowed, screenshot_allowed
 
 _ACTION_FIELDS = set(AgentAction.model_fields) - {"type"}
 
@@ -39,17 +39,21 @@ def _validate(call: dict | None, state: dict, image_attached: bool) -> str | Non
         return "open_url needs a `url`."
     if name == "request_screenshot" and (image_attached or not screenshot_allowed(state)):
         return "No screenshot is available for this page state. Decide from the element list, or use scroll/read_page/go_back."
+    if name == "read_page" and not read_allowed(state):
+        return "You already read this page; its content is in NOTES. Act on it, or navigate elsewhere."
 
     if name not in ("task_complete", "read_page", "request_screenshot"):
-        fingerprint = f"{state.get('page_sig')}|{describe_action(_to_action(call), state)}"
-        if state.get("recent_fps", []).count(fingerprint) >= 2:
-            return "You already did exactly this twice on this same page without progress. Choose a different action."
+        action = _to_action(call)
+        return loop_error(state, action, describe_action(action, state))
     return None
 
 
 def _fallback(state: dict) -> dict:
     if screenshot_allowed(state):
         return {"type": "request_screenshot", "reason": "Element list is ambiguous; checking the screen"}
+    # Reading beats blind scrolling, which only feeds scroll loops.
+    if read_allowed(state):
+        return {"type": "read_page", "reason": "Reading the page to decide what to do next"}
     return {"type": "scroll", "direction": "down", "reason": "Looking for more options"}
 
 

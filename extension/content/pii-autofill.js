@@ -371,9 +371,44 @@
       .replace(/\s+/g, ' ');
   }
 
+  /*
+   * Custom profile keys (added on the profile page beyond the built-in fields)
+   * extend FIELD_MAPPINGS without code changes:
+   *  - a key whose name is already a built-in term ("name", "address") is an
+   *    alias: it fills that built-in field when the built-in value is empty;
+   *  - any other key maps to fields labelled with its own name
+   *    ("libraryCard" → "Library card" / name="librarycard").
+   */
+  let mappingEntries = Object.entries(FIELD_MAPPINGS);
+  let aliases = {}; // built-in key -> custom keys that stand in for it
+
+  function rebuildMappings() {
+    const custom = [];
+    aliases = {};
+    for (const key of Object.keys(profile)) {
+      if (key in FIELD_MAPPINGS || !SCHEMA.isCustomKey(key)) continue;
+      const label = normalize(SCHEMA.keyToLabel(key));
+      if (label.length < 3) continue;
+      const owner = Object.keys(FIELD_MAPPINGS).find(
+        builtIn => FIELD_MAPPINGS[builtIn].some(term => normalize(term) === label)
+      );
+      if (owner) {
+        (aliases[owner] = aliases[owner] || []).push(key);
+        continue;
+      }
+      custom.push([key, [...new Set([label, label.replace(/ /g, '')])]]);
+    }
+    mappingEntries = [...Object.entries(FIELD_MAPPINGS), ...custom];
+  }
+
   function configValue(key) {
-    const value = profile[key];
-    return typeof value === 'string' ? value : '';
+    const own = profile[key];
+    if (typeof own === 'string' && own.trim()) return own;
+    for (const alias of aliases[key] || []) {
+      const value = profile[alias];
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+    return '';
   }
 
   function hasAnyProfileValue() {
@@ -394,6 +429,7 @@
       storedProfile && typeof storedProfile === 'object'
         ? storedProfile
         : {};
+    rebuildMappings();
 
     settings = {
       enabled: storedSettings?.enabled !== false,
@@ -499,7 +535,7 @@
     function bestMatch(text) {
       const candidates = [];
 
-      for (const [key, terms] of Object.entries(FIELD_MAPPINGS)) {
+      for (const [key, terms] of mappingEntries) {
         for (const term of terms) {
           const normalizedTerm = normalize(term);
 
@@ -587,8 +623,10 @@
     return autoKey || null;
   }
 
-  function isEligible(field) {
-    if (pausedForHumanInput || !settings.enabled) return false;
+  // `consent`: the user just said "yes, autofill" for this page in the side
+  // panel, so the human-input pause doesn't apply to this one fill.
+  function isEligible(field, consent = false) {
+    if ((pausedForHumanInput && !consent) || !settings.enabled) return false;
     if (
       !(field instanceof HTMLElement) ||
       field.disabled ||
@@ -817,25 +855,33 @@
     );
   }
 
-  function process(field) {
+  /**
+   * Fills one field from the profile. Returns the profile key it filled (or,
+   * with `dryRun`, would fill), else null.
+   * `consent`: one-time fill the user approved in the side panel; passwords,
+   * OTPs and other secrets are still refused by classify().
+   */
+  function process(field, { dryRun = false, consent = false } = {}) {
     if (FILLED.has(field)) {
-      return;
+      return null;
     }
 
-    if (!isEligible(field)) {
-      return;
+    if (!isEligible(field, consent)) {
+      return null;
     }
 
     const mapping =
       classify(field);
 
-    PROCESSED.set(
-      field,
-      mapping || ''
-    );
+    if (!dryRun) {
+      PROCESSED.set(
+        field,
+        mapping || ''
+      );
+    }
 
     if (!mapping) {
-      return;
+      return null;
     }
 
     let value =
@@ -846,8 +892,8 @@
       !value.trim()
     ) {
       // Don't nag on every form before the user has set up a profile.
-      if (hasAnyProfileValue()) showNotice('missing');
-      return;
+      if (!dryRun && hasAnyProfileValue()) showNotice('missing');
+      return null;
     }
 
     // Page scripts can read a filled value from input/change events even if
@@ -856,8 +902,12 @@
       SENSITIVE.has(mapping) &&
       !sensitiveAllowedHere()
     ) {
-      showNotice('sensitive');
-      return;
+      if (!dryRun) showNotice('sensitive');
+      return null;
+    }
+
+    if (dryRun) {
+      return mapping;
     }
 
     if (
@@ -934,7 +984,7 @@
         `[PrivSight Autofill] filled ${mapping} (radio)`
       );
 
-      return;
+      return mapping;
     }
 
     if (
@@ -971,6 +1021,54 @@
 
     console.info(
       `[PrivSight Autofill] filled ${mapping} (${field.tagName.toLowerCase()})`
+    );
+
+    return mapping;
+  }
+
+  // ── Ask-first autofill for pages PrivSight hands to the user ─────────
+  // On login / verification pages automatic filling is off (see
+  // isHumanInputGatePage). The side panel instead asks the user; these list
+  // what could be filled (profile KEYS + labels only, never values) and do a
+  // one-time fill if the user says yes. Secrets (passwords, OTPs, CVV, PINs)
+  // are never fillable: classify() rejects them before any value is read.
+  // Visible fields only: hidden inputs are a classic way for a page to harvest
+  // autofilled data the user never sees, and the user only approved what's on screen.
+  function fillableFields() {
+    return Array.from(document.querySelectorAll('input, textarea, select')).filter(field => {
+      if (!field.getClientRects().length) return false;
+      const style = getComputedStyle(field);
+      return style.visibility !== 'hidden' && style.opacity !== '0';
+    });
+  }
+
+  function labelFor(key) {
+    for (const group of SCHEMA.groups) {
+      const hit = group.fields.find(([k]) => k === key);
+      if (hit) return hit[1];
+    }
+    const label = SCHEMA.keyToLabel(key);
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
+
+  function describe(keys) {
+    const unique = [...new Set(keys)];
+    return { count: keys.length, keys: unique, labels: unique.map(labelFor) };
+  }
+
+  function previewConsentFill() {
+    return describe(
+      fillableFields()
+        .map(field => process(field, { dryRun: true, consent: true }))
+        .filter(Boolean)
+    );
+  }
+
+  function consentFill() {
+    return describe(
+      fillableFields()
+        .map(field => process(field, { consent: true }))
+        .filter(Boolean)
     );
   }
 
@@ -1143,6 +1241,10 @@
     } else if (message?.type === 'RESUME_PII_AUTOFILL') {
       pausedForHumanInput = false;
       sendResponse?.({ ok: true });
+    } else if (message?.type === 'PII_AUTOFILL_PREVIEW') {
+      sendResponse?.({ ok: true, ...previewConsentFill() });
+    } else if (message?.type === 'PII_AUTOFILL_CONSENT_FILL') {
+      sendResponse?.({ ok: true, ...consentFill() });
     }
   });
 

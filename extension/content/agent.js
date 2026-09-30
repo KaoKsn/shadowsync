@@ -513,6 +513,48 @@
     return redactorInstance;
   }
 
+  // ─── User profile → redaction ────────────────────────────
+  // The autofill profile in chrome.storage.local (edited on profile/profile.html,
+  // also read by pii-autofill.js) is the single source of truth for the user's
+  // own data. Its values are compiled once into matchers and masked by
+  // redactor.js wherever they appear. Read locally only; never sent anywhere.
+  const PROFILE_SCHEMA = globalThis.PrivSightPIISchema;
+  let profileMatcher; // undefined = not loaded yet, null = nothing to match
+
+  function loadProfileMatcher() {
+    if (profileMatcher !== undefined) return Promise.resolve(profileMatcher);
+    if (!PROFILE_SCHEMA || !chrome.storage?.local ||
+        typeof DOMRedactor === 'undefined' || typeof DOMRedactor.compileProfile !== 'function') {
+      return Promise.resolve(null);
+    }
+    const key = PROFILE_SCHEMA.storageKeys.profile;
+    return new Promise((resolve) => {
+      chrome.storage.local.get(key, (items) => {
+        if (chrome.runtime.lastError) { resolve(null); return; } // retry next capture
+        const profile = items?.[key] && typeof items[key] === 'object' ? items[key] : {};
+        profileMatcher = DOMRedactor.compileProfile(profile, {
+          skipKeys: PROFILE_SCHEMA.redactExemptKeys,
+          nameKeys: Object.keys(profile).filter(PROFILE_SCHEMA.isNameKey),
+        });
+        resolve(profileMatcher);
+      });
+    });
+  }
+
+  // Profile edits apply on the next capture without reloading the tab
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === 'local' && PROFILE_SCHEMA && PROFILE_SCHEMA.storageKeys.profile in changes) {
+      profileMatcher = undefined;
+    }
+  });
+
+  /** Logs which profile KEYS were masked (e.g. "fullName×2") — never the values. */
+  function logProfileMatches(matches) {
+    const entries = Object.entries(matches || {});
+    if (!entries.length) return;
+    console.debug(`[PrivSight] Profile values masked: ${entries.map(([k, n]) => `${k}×${n}`).join(', ')}`);
+  }
+
   // ─── Local PII Engine (offscreen NER + rules, see offscreen/ner.js) ─────
   // Visible text goes to the extension's own offscreen document (never off-device).
   // The engine returns PII strings; redactor.js then redacts them in the live DOM.
@@ -661,9 +703,13 @@
 
     if (redactor && typeof redactor.redactLiveDOM === 'function') {
       try {
-        const extraTerms = await getPiiTerms(collectVisibleSegments());
-        const redactResult = redactor.redactLiveDOM(document.body || document.documentElement, { extraTerms });
+        const [extraTerms, profile] = await Promise.all([
+          getPiiTerms(collectVisibleSegments()),
+          loadProfileMatcher(),
+        ]);
+        const redactResult = redactor.redactLiveDOM(document.body || document.documentElement, { extraTerms, profile });
         undoList = redactResult.undoList || [];
+        logProfileMatches(redactResult.profileMatches);
         const s = redactResult.stats || {};
         let sensitiveCount = 0;
         const breakdown = {};
@@ -824,8 +870,10 @@
         }
       }
 
-      // If redacted, strip the actual [REDACTED] placeholder from what we send
-      const safeText  = isRedacted ? null : textContent;
+      // PII redactions already replaced the private parts of the text with
+      // [REDACTED] in the live DOM, so the rest stays useful to tell elements
+      // apart ("Order ID [REDACTED] shipped"). Password / face redactions drop it.
+      const safeText  = isRedacted && redactionReason !== 'pii' ? null : textContent;
       const safeValue = isRedacted ? null : elementValue;
 
       // Unified element descriptor compatible with the new backend snapshot schema
@@ -963,10 +1011,14 @@
       }
     }
 
-    // 8. Return sanitized DOM and screenshot payload to send to backend
+    // 8. Return sanitized DOM and screenshot payload to send to backend.
+    // Titles often carry the user's name ("John Doe – Profile"); same redaction as page text.
+    const pageTitle = typeof DOMRedactor !== 'undefined' && typeof DOMRedactor.redactString === 'function'
+      ? DOMRedactor.redactString(document.title || '', null, null, await loadProfileMatcher())
+      : (document.title || '');
     return {
       url: location.href,
-      title: document.title || '',
+      title: pageTitle,
       sanitized_dom: sanitizedDom,
       sanitized_screenshot_b64: screenshotB64,
       human_gate: humanGate,
@@ -982,7 +1034,19 @@
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     };
-    const controls = Array.from(document.querySelectorAll('input, textarea, select')).filter(visible);
+    // Search boxes (Google's `q`, site search bars) are not forms the user must
+    // fill; counting them made any results page with "Register" / "Login" in a
+    // result title look like an account page.
+    const isSearchControl = (field) => {
+      const type = (field.type || '').toLowerCase();
+      const role = (field.getAttribute('role') || '').toLowerCase();
+      const own = normalize([field.name, field.id, field.placeholder, field.getAttribute('aria-label'), field.getAttribute('title')].join(' '));
+      return type === 'search' || role === 'searchbox' || field.name === 'q' ||
+        Boolean(field.closest('[role="search"], form[action*="search"]')) ||
+        /\bsearch\b/.test(own);
+    };
+    const controls = Array.from(document.querySelectorAll('input, textarea, select'))
+      .filter((field) => visible(field) && !isSearchControl(field));
     const labels = controls.map((field) => {
       const labelled = field.getAttribute('aria-label') || '';
       const references = (field.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || '').join(' ');
@@ -1003,7 +1067,12 @@
     if (controlsPresent && /\b(?:one time code|otp|verification code|security code|captcha|human verification)\b/.test(labels)) return 'Verification';
     if (controlsPresent && /\b(?:credit card|card number|cvv|cvc|payment method)\b/.test(labels)) return 'Payment details';
     if (controlsPresent && /\b(?:checkout|payment)\b/.test(`${url} ${title} ${headings}`)) return 'Payment details';
-    if (hasPassword || (controlsPresent && /\b(?:login|log in|sign in|signin|sign up|signup|register|registration|create account)\b/.test(`${url} ${title} ${headings}`))) return 'Login or account details';
+    // A login/sign-up keyword in the URL, title or a heading only counts when the
+    // page also has an actual account field, not merely any input.
+    const accountField = controls.some((field) => ['email', 'tel', 'password'].includes((field.type || '').toLowerCase()) ||
+        /\b(?:username|email|tel|name|given name|family name|current password|new password)\b/.test(normalize(field.autocomplete))) ||
+      /\b(?:email|e mail|username|user name|user id|login id|phone|mobile|full name|first name|last name|name|password)\b/.test(labels);
+    if (hasPassword || (accountField && /\b(?:login|log in|sign in|signin|sign up|signup|register|registration|create account)\b/.test(`${url} ${title} ${headings}`))) return 'Login or account details';
     if (/\b(?:consent|cookie preferences|privacy choices)\b/.test(`${url} ${title} ${headings} ${pageText}`) && /\b(?:accept|reject|save choices|manage preferences)\b/.test(buttonText)) return 'Consent choices';
     if (controlsPresent && privateField && humanSubmit) return 'Private information';
     if (controlsPresent && /\b(?:application|scholarship|profile)\b/.test(`${url} ${title} ${headings}`) && /\b(?:email|phone|address|identity|student id)\b/.test(labels)) return 'Private information';
@@ -1076,11 +1145,68 @@
     return null;
   }
 
+  /** Nearest enabled submit / search button around a text field, or null. */
+  function findSubmitControl(field) {
+    const selector = [
+      'button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
+      'button[aria-label*="search" i]', '[role="button"][aria-label*="search" i]',
+    ].join(', ');
+    let scope = field.form || field.closest('[role="search"]') || field.parentElement;
+    for (let depth = 0; scope && depth < 4; depth += 1, scope = scope.parentElement) {
+      const control = Array.from(scope.querySelectorAll(selector))
+        .find((node) => node !== field && !node.disabled && node.getClientRects().length > 0);
+      if (control) return control;
+    }
+    return null;
+  }
+
+  /**
+   * Presses Enter in a filled field and makes sure the form really submits.
+   * Pages like Google ignore synthetic (untrusted) key events and even call
+   * preventDefault on them, so the old "only submit if Enter wasn't handled"
+   * check left the search unsent and the agent retyping it in a loop.
+   * Returns how it was submitted: 'enter' | 'form' | 'button' | 'none'.
+   */
+  async function submitTypedField(el) {
+    const before = location.href;
+    let leaving = false;
+    const onLeave = () => { leaving = true; };
+    window.addEventListener('beforeunload', onLeave);
+    window.addEventListener('pagehide', onLeave);
+    try {
+      const keyInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent('keydown', keyInit));
+      el.dispatchEvent(new KeyboardEvent('keypress', keyInit));
+      el.dispatchEvent(new KeyboardEvent('keyup', keyInit));
+
+      // Give the page's own Enter handling a moment to start navigating.
+      await new Promise((r) => setTimeout(r, 350));
+      if (leaving || location.href !== before) return 'enter';
+
+      const form = el.form || el.closest('form');
+      if (form) {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+        return 'form';
+      }
+      const control = findSubmitControl(el);
+      if (control) {
+        control.click();
+        return 'button';
+      }
+      return 'none';
+    } finally {
+      window.removeEventListener('beforeunload', onLeave);
+      window.removeEventListener('pagehide', onLeave);
+    }
+  }
+
   async function executeAction(action) {
     if (!action || !action.type) {
       throw new Error('Invalid action payload: action.type is required');
     }
 
+    let submittedVia; // TYPE with submit: how the form was actually submitted
     const type = action.type.toUpperCase();
     console.log(`[PrivSight Executor] Executing action: ${type}`, action);
 
@@ -1106,6 +1232,10 @@
           el.focus();
           el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
           el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          // The agent follows one tab: a link opening a new tab would leave it
+          // looking at an unchanged page and clicking again.
+          const link = el.closest('a[target]');
+          if (link && !/^_(?:self|top|parent)$/i.test(link.target)) link.target = '_self';
           el.click();
           break;
         }
@@ -1139,15 +1269,7 @@
           el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
 
           if (action.submit) {
-            // Press Enter; fall back to a native form submit if the page ignored it.
-            const keyInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-            const notHandled = el.dispatchEvent(new KeyboardEvent('keydown', keyInit));
-            el.dispatchEvent(new KeyboardEvent('keypress', keyInit));
-            el.dispatchEvent(new KeyboardEvent('keyup', keyInit));
-            if (notHandled && el.form) {
-              if (typeof el.form.requestSubmit === 'function') el.form.requestSubmit();
-              else el.form.submit();
-            }
+            submittedVia = await submitTypedField(el);
           }
           break;
         }
@@ -1190,7 +1312,7 @@
 
     // Allow browser layout and DOM mutation observers to settle
     await new Promise((r) => setTimeout(r, 400));
-    return { ok: true, actionType: type };
+    return submittedVia ? { ok: true, actionType: type, submittedVia } : { ok: true, actionType: type };
   }
 
   // ─── Page Text Reader ───────────────────────────────────
@@ -1203,7 +1325,7 @@
     if (typeof DOMRedactor !== 'undefined' && typeof DOMRedactor.redactString === 'function') {
       const paragraphs = text.split(/\n{2,}/).filter((p) => /[A-Za-z0-9]/.test(p)).slice(0, PII_MAX_SEGMENTS);
       const terms = DOMRedactor.compileTerms ? DOMRedactor.compileTerms(await getPiiTerms(paragraphs)) : null;
-      text = DOMRedactor.redactString(text, null, terms);
+      text = DOMRedactor.redactString(text, null, terms, await loadProfileMatcher());
     }
     return text;
   }

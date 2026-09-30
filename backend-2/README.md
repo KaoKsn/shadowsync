@@ -22,6 +22,18 @@ an in-memory checkpointer. `GET /health` shows which one is active.
 
 Tests (fake LLM, no network): `pip install pytest && python -m pytest tests -q`
 
+### Troubleshooting
+
+- **`No supported WebSocket library detected` / `GET /ws/task 404`**: uvicorn is
+  running from a Python that doesn't have `requirements.txt` installed (plain
+  `uvicorn` has no WebSocket support). Activate `.venv` and reinstall;
+  `uvicorn[standard]` provides it.
+- **`Redis unavailable ... falling back to in-memory`** on every start: set
+  `USE_REDIS=0` unless Redis Stack is running.
+- **WebSocket closed with code 1008**: the connecting origin isn't allowed. Only
+  `chrome-extension://` origins (or the ones in `ALLOWED_ORIGINS`) may connect,
+  so web pages can't drive the agent or spend your API key.
+
 ## How it works
 
 The extension talks to `ws://<host>:8000/ws/task` (protocol in

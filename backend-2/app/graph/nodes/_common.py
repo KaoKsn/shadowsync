@@ -1,5 +1,7 @@
 from ...config import MAX_JOURNAL_STORED, MAX_MEMORY_NOTES, MAX_SCREENSHOTS
-from ...prompts import _clip, short_url
+from ...prompts import _clip, short_url, strip_fragment
+
+MAX_SCROLL_DOWNS_PER_PAGE = 5
 
 
 def element_body(state: dict, target_id) -> str:
@@ -43,6 +45,39 @@ def append_memory(state: dict, note: str | None) -> list[str]:
 
 def advance_plan(state: dict) -> int:
     return min(state.get("plan_idx", 0) + 1, len(state.get("plan", [])))
+
+
+def fingerprint(state: dict, desc: str) -> str:
+    """Loop-detection key. Uses the URL, not page_sig: only viewport elements
+    are sent, so page_sig changes on every scroll/dropdown and a page_sig key
+    never repeats even when the agent does the same thing over and over."""
+    return f"{strip_fragment(state.get('url'))}|{desc}"
+
+
+def loop_error(state: dict, action: dict, desc: str) -> str | None:
+    """Why this action would repeat a loop on the current page, or None."""
+    fps = state.get("recent_fps", [])
+    key = fingerprint(state, desc)
+    if action["type"] == "scroll":
+        down, up = fingerprint(state, "scroll down"), fingerprint(state, "scroll up")
+        if action.get("direction", "down") == "down":
+            if fps.count(down) >= MAX_SCROLL_DOWNS_PER_PAGE:
+                return (f"You already scrolled this page {MAX_SCROLL_DOWNS_PER_PAGE} times. Use read_page to read "
+                        "all of its text, or act on the elements you can see.")
+            return None
+        if fps[-2:] == [down, down] or fps.count(up) >= 2:
+            return "Don't scroll back and forth. Use read_page to read the whole page, or click something."
+        return None
+    if action["type"] == "type_text" and action.get("submit") and key in fps:
+        return ("You already submitted this exact text on this page. If it didn't navigate, click the "
+                "search/submit button instead of typing again.")
+    if fps.count(key) >= 2:
+        return "You already did exactly this twice on this same page without progress. Choose a different action."
+    return None
+
+
+def read_allowed(state: dict) -> bool:
+    return state.get("page_sig") not in state.get("read_sigs", [])
 
 
 def screenshot_allowed(state: dict) -> bool:

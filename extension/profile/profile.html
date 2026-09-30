@@ -10,8 +10,8 @@
   <header class="pf-header">
     <img src="../icons/icon48.png" alt="" class="pf-logo" />
     <div>
-      <h1>Autofill profile</h1>
-      <p class="pf-sub">Stored only in this browser. Never sent to the PrivSight agent or any server.</p>
+      <h1>Your profile</h1>
+      <p class="pf-sub">Stored only in this browser. PrivSight uses it to autofill forms and to mask these exact values on every page before anything reaches the AI. The profile itself is never sent to the PrivSight agent or any server.</p>
     </div>
   </header>
 
@@ -50,6 +50,14 @@
 
     <form id="pf-form" class="pf-form" autocomplete="off">
       <div id="pf-groups"></div>
+
+      <section class="pf-group">
+        <h2>Custom fields</h2>
+        <p class="pf-hint">Add anything else as a name and value, e.g. <code>libraryCard</code> → <code>LIB-2231</code>. PrivSight fills form fields labelled with that name and masks the value wherever it appears on a page.</p>
+        <div class="pf-custom" id="pf-custom"></div>
+        <button type="button" class="pf-btn pf-btn--small" id="pf-custom-add">+ Add field</button>
+      </section>
+
       <div class="pf-actions">
         <button type="submit" class="pf-btn pf-btn--primary">Save profile</button>
         <button type="button" class="pf-btn pf-btn--danger" id="pf-clear">Clear profile</button>

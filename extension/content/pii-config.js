@@ -3,8 +3,11 @@
  *
  * This file only describes WHICH fields exist. The user's actual values are
  * stored in chrome.storage.local (edited on profile/profile.html), so no
- * personal data lives in source code or git. Shared by the content-side
- * autofill module and the profile page. Never sent to the agent backend.
+ * personal data lives in source code or git. That stored profile is the
+ * single source of truth for both autofill (pii-autofill.js) and profile
+ * redaction (agent.js -> redactor.js). Users may add custom keys beyond the
+ * built-in fields; both paths pick them up without code changes.
+ * Never sent to the agent backend.
  */
 (() => {
   'use strict';
@@ -129,10 +132,47 @@
     .filter((group) => group.sensitive)
     .flatMap((group) => group.fields.map(([key]) => key));
 
+  // The same stored profile drives redaction: every profile value is masked
+  // wherever it appears on a page before page data leaves the browser. These
+  // keys hold generic values ("India", "Male", "3") that would blank out
+  // ordinary page text and break navigation, so they are autofill-only.
+  const REDACT_EXEMPT_KEYS = [
+    'gender', 'nationality', 'city', 'state', 'country',
+    'bankName', 'course', 'educationBranch', 'year', 'semester',
+    'graduationYear', 'department', 'jobTitle', 'passportExpiry',
+  ];
+
+  // Keys holding a person's name. Their individual words are masked too, so
+  // "Hi John" is caught when the profile holds "John Doe".
+  const NAME_KEYS = ['fullName', 'firstName', 'middleName', 'lastName', 'preferredName'];
+
+  const SCHEMA_KEYS = new Set(GROUPS.flatMap((group) => group.fields.map(([key]) => key)));
+
+  /** "studentId" / "library_card-no" -> "student id" / "library card no" */
+  function keyToLabel(key) {
+    return String(key || '')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_\-.]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
   Object.defineProperty(globalThis, 'PrivSightPIISchema', {
     value: Object.freeze({
       groups: GROUPS,
       sensitiveKeys: SENSITIVE_KEYS,
+      redactExemptKeys: REDACT_EXEMPT_KEYS,
+      nameKeys: NAME_KEYS,
+      // Keys the user adds on the profile page beyond the built-in fields
+      isCustomKey: (key) => !SCHEMA_KEYS.has(key),
+      // Built-in name fields, plus custom keys that hold a person's name
+      // ("name", "studentName", "nick name") — not "username" or "bankName"
+      isNameKey: (key) => NAME_KEYS.includes(key) ||
+        (!SCHEMA_KEYS.has(key) &&
+          /^(?:(?:full|first|middle|last|given|family|preferred|nick|legal|student|my)\s?)?name$/
+            .test(keyToLabel(key))),
+      keyToLabel,
       storageKeys: {
         profile: 'privsightProfile',            // { [fieldKey]: string }
         settings: 'privsightAutofillSettings',  // { enabled, sensitiveSites: [origin] }

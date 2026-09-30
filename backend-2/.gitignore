@@ -5,6 +5,7 @@ __pycache__/
 *.json
 test*
 !tests/
+!tests/**
 logs/
 debug_images/
 .pytest_cache/

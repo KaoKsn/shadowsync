@@ -2,6 +2,7 @@
 token-usage logging (append-only JSONL, one line per call)."""
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -14,6 +15,7 @@ from .config import (
     ACTOR_MODEL,
     LLM_BASE_URL,
     LLM_PROVIDER,
+    LLM_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     PLANNER_MAX_TOKENS,
     PLANNER_MODEL,
@@ -26,7 +28,14 @@ Role = Literal["actor", "planner", "reader"]
 _MODELS = {"actor": ACTOR_MODEL, "planner": PLANNER_MODEL, "reader": READER_MODEL}
 _MAX_TOKENS = {"actor": ACTOR_MAX_TOKENS, "planner": PLANNER_MAX_TOKENS, "reader": READER_MAX_TOKENS}
 
-client = OpenAI(api_key=OPENAI_API_KEY or "ollama", base_url=LLM_BASE_URL)
+log = logging.getLogger("privsight")
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY or "ollama",
+    base_url=LLM_BASE_URL,
+    timeout=LLM_TIMEOUT_SECONDS,
+    max_retries=1,
+)
 
 LOG_PATH = Path(__file__).resolve().parents[1] / "logs" / "usage.jsonl"
 LOG_PATH.parent.mkdir(exist_ok=True, parents=True)
@@ -43,6 +52,26 @@ def _usage(response) -> dict:
         "completion": getattr(usage, "completion_tokens", 0) or 0,
         "cached": (getattr(details, "cached_tokens", 0) or 0) if details else 0,
     }
+
+
+def _warn_if_truncated(response, node: str) -> None:
+    """A reply cut at max_tokens loses its tool arguments / JSON entirely."""
+    if getattr(response.choices[0], "finish_reason", None) == "length":
+        log.warning("%s output hit max_tokens and was truncated; raise the *_MAX_TOKENS setting", node)
+
+
+def parse_json_object(content: str) -> dict:
+    """Parse model JSON; tolerate prose/code fences and never raise."""
+    try:
+        data = json.loads(content or "{}")
+    except json.JSONDecodeError:
+        # Local models occasionally wrap JSON in prose/code fences.
+        start, end = content.find("{"), content.rfind("}")
+        try:
+            data = json.loads(content[start : end + 1]) if start != -1 and end > start else {}
+        except json.JSONDecodeError:
+            data = {}
+    return data if isinstance(data, dict) else {}
 
 
 def log_usage(*, node: str, model: str, usage: dict, meta: dict | None = None) -> None:
@@ -89,6 +118,7 @@ def call_tools(messages: list[dict], tools: list[dict], *, node: str, meta: dict
     )
     usage = _usage(response)
     log_usage(node=node, model=_MODELS["actor"], usage=usage, meta=meta)
+    _warn_if_truncated(response, node)
     tool_calls = response.choices[0].message.tool_calls or []
     return (parse_tool_call(tool_calls[0]) if tool_calls else None), usage
 
@@ -107,10 +137,5 @@ def call_json(role: Role, messages: list[dict], schema: dict, *, name: str, meta
     )
     usage = _usage(response)
     log_usage(node=name, model=_MODELS[role], usage=usage, meta=meta)
-    content = response.choices[0].message.content or "{}"
-    try:
-        return json.loads(content), usage
-    except json.JSONDecodeError:
-        # Local models occasionally wrap JSON in prose/code fences.
-        start, end = content.find("{"), content.rfind("}")
-        return (json.loads(content[start : end + 1]) if start != -1 and end > start else {}), usage
+    _warn_if_truncated(response, name)
+    return parse_json_object(response.choices[0].message.content or "{}"), usage

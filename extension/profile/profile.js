@@ -1,6 +1,8 @@
 /*
- * Autofill profile editor. Reads/writes chrome.storage.local only; the
- * content-side autofill module picks up changes live via storage.onChanged.
+ * Profile editor. Reads/writes chrome.storage.local only. The saved profile
+ * (built-in fields + any custom keys) is the single source of truth for both
+ * autofill (pii-autofill.js) and redaction (agent.js → redactor.js); both
+ * pick up changes live via storage.onChanged.
  */
 (() => {
   'use strict';
@@ -83,6 +85,77 @@
     }
   }
 
+  // ── Custom key/value fields ──────────────────────────────────
+  // Stored flat in the same profile object as the built-in fields, so autofill
+  // and redaction pick them up with no code changes.
+  const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+  function addCustomRow(key = '', value = '') {
+    const row = document.createElement('div');
+    row.className = 'pf-custom-row';
+
+    // No `name` attributes: these are collected separately from the fixed fields
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.placeholder = 'Field name (e.g. libraryCard)';
+    keyInput.setAttribute('aria-label', 'Custom field name');
+    keyInput.maxLength = 40;
+    keyInput.autocomplete = 'off';
+    keyInput.spellcheck = false;
+    keyInput.value = key;
+
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.placeholder = 'Value';
+    valueInput.setAttribute('aria-label', 'Custom field value');
+    valueInput.autocomplete = 'off';
+    valueInput.spellcheck = false;
+    valueInput.value = value;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'pf-btn pf-btn--small';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => row.remove());
+
+    row.append(keyInput, valueInput, remove);
+    $('pf-custom').appendChild(row);
+    return keyInput;
+  }
+
+  function renderCustom(profile) {
+    $('pf-custom').textContent = '';
+    for (const [key, value] of Object.entries(profile)) {
+      if (SCHEMA.isCustomKey(key) && typeof value === 'string') addCustomRow(key, value);
+    }
+  }
+
+  /** Reads custom rows into `next`; returns an error message or '' when valid. */
+  function collectCustom(next) {
+    const seen = new Set();
+    for (const row of $('pf-custom').querySelectorAll('.pf-custom-row')) {
+      const [keyInput, valueInput] = row.querySelectorAll('input');
+      const key = keyInput.value.trim();
+      const value = valueInput.value.trim();
+      keyInput.removeAttribute('aria-invalid');
+      if (!key && !value) continue;
+
+      let error = '';
+      if (!key) error = 'Give every custom value a field name.';
+      else if (key.length < 2 || RESERVED_KEYS.has(key)) error = `"${key}" can't be used as a field name.`;
+      else if (!SCHEMA.isCustomKey(key)) error = `"${key}" is a built-in field — fill it in above instead.`;
+      else if (seen.has(key)) error = `"${key}" is listed twice.`;
+      if (error) {
+        keyInput.setAttribute('aria-invalid', 'true');
+        keyInput.focus();
+        return error;
+      }
+      seen.add(key);
+      if (value) next[key] = value;
+    }
+    return '';
+  }
+
   function renderSettings() {
     $('pf-enabled').checked = settings.enabled;
 
@@ -131,7 +204,10 @@
     };
 
     renderForm(profile);
+    renderCustom(profile);
     renderSettings();
+
+    $('pf-custom-add').addEventListener('click', () => addCustomRow().focus());
 
     $('pf-enabled').addEventListener('change', async (event) => {
       settings = { ...settings, enabled: event.target.checked };
@@ -150,6 +226,11 @@
         const trimmed = String(value).trim();
         if (trimmed) next[key] = trimmed;
       }
+      const error = collectCustom(next);
+      if (error) {
+        showStatus(error);
+        return;
+      }
       await storageSet({ [KEYS.profile]: next });
       showStatus('Profile saved');
     });
@@ -158,6 +239,7 @@
       if (!confirm('Delete all saved profile details from this browser?')) return;
       await new Promise((resolve) => chrome.storage.local.remove(KEYS.profile, resolve));
       renderForm({});
+      renderCustom({});
       showStatus('Profile cleared');
     });
   }

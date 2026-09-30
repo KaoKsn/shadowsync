@@ -157,3 +157,25 @@ p { margin: 0; color: var(--text-2); }
 .pf-toggle input:checked + .pf-toggle__slider { background: var(--accent); }
 .pf-toggle input:checked + .pf-toggle__slider::before { transform: translateX(18px); }
 .pf-toggle input:focus-visible + .pf-toggle__slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Custom key/value fields */
+.pf-hint { font-size: 13px; margin: -4px 0 12px; }
+.pf-hint code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: rgba(127,127,127,0.15); }
+.pf-custom { display: grid; gap: 8px; margin-bottom: 10px; }
+.pf-custom:empty { display: none; }
+.pf-custom-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
+.pf-custom-row input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+}
+.pf-custom-row input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.pf-custom-row input[aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: -1px; }
+@media (max-width: 520px) {
+  .pf-custom-row { grid-template-columns: 1fr auto; }
+  .pf-custom-row input:first-child { grid-column: 1 / -1; }
+}

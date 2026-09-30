@@ -5,6 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
+from .config import ALLOWED_ORIGINS
 from .graph.build_graph import build_graph
 from .schemas import AgentResponse, ClientMessage
 
@@ -37,6 +38,7 @@ def _initial_state(msg: ClientMessage) -> dict:
         "stuck_level": 0,
         "screenshot_sigs": [],
         "screenshots_used": 0,
+        "read_sigs": [],
         "replan_count": 0,
         "total_steps": 0,
         "pending_action": None,
@@ -49,8 +51,14 @@ def _delete_session(session_id: str) -> None:
     try:
         checkpointer.delete_thread(session_id)
         return
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
+        # AttributeError: older langgraph savers (e.g. MemorySaver with the
+        # pinned langgraph 0.2.x) have no delete_thread at all.
         pass
+    memory_storage = getattr(checkpointer, "storage", None)
+    if isinstance(memory_storage, dict):
+        memory_storage.pop(session_id, None)
+        return
     redis_client = getattr(checkpointer, "_redis", None)
     if redis_client is None:
         return
@@ -97,8 +105,23 @@ def health():
     return {"status": "ok", "checkpointer": type(checkpointer).__name__}
 
 
+def _origin_allowed(origin: str | None) -> bool:
+    """Web pages can open WebSockets to localhost, so only the extension (or
+    non-browser clients, which send no Origin) may use the agent."""
+    if not origin:
+        return True
+    origin = origin.rstrip("/")
+    if ALLOWED_ORIGINS:
+        return origin in ALLOWED_ORIGINS
+    return origin.startswith("chrome-extension://")
+
+
 @app.websocket("/ws/task")
 async def websocket_task(websocket: WebSocket):
+    if not _origin_allowed(websocket.headers.get("origin")):
+        log.warning("rejected WebSocket from origin %s", websocket.headers.get("origin"))
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         while True:
@@ -121,6 +144,9 @@ async def websocket_task(websocket: WebSocket):
                 # LLM calls are blocking; keep the event loop free.
                 response = await asyncio.to_thread(_run, msg)
                 await websocket.send_json(response.model_dump(exclude_none=True))
+                if response.status in ("done", "failed"):
+                    # Finished: free the checkpoint (MemorySaver never expires it).
+                    await asyncio.to_thread(_delete_session, msg.session_id)
             except Exception as exc:
                 log.exception("agent turn failed for session %s", msg.session_id)
                 await websocket.send_json(

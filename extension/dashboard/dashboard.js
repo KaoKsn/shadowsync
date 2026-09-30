@@ -31,7 +31,7 @@
   // (plus the legacy keys the old dashboard expected). Order = stack order.
   const CATEGORIES = [
     { key: 'identity',    label: 'Identity documents', color: 'var(--c-identity)',
-      types: ['aadhaar', 'pan', 'indianPassport', 'ssn', 'vehicleRegistration'] },
+      types: ['profile', 'aadhaar', 'pan', 'indianPassport', 'ssn', 'vehicleRegistration'] },
     { key: 'financial',   label: 'Financial',          color: 'var(--c-financial)',
       types: ['creditCard', 'ifsc'] },
     { key: 'contact',     label: 'Contact details',    color: 'var(--c-contact)',
@@ -45,6 +45,7 @@
   ];
 
   const TYPE_LABELS = {
+    profile: 'Your saved profile values',
     aadhaar: 'Aadhaar numbers',
     pan: 'PAN numbers',
     indianPassport: 'Passport numbers',

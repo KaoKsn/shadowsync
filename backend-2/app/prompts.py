@@ -14,8 +14,8 @@ Rules:
 - Work on the current subgoal (marked →). Set subgoal_done=true when the page shows it is satisfied.
 - Only use ids from the current element list; ids change every turn.
 - If the site you need is not open, use open_url instead of hunting for links.
-- To search, type_text into the search box with submit=true.
-- Only the viewport is listed: scroll to reveal more; use read_page to read text content (articles, results, prices, answers, summaries).
+- To search, type_text into the search box with submit=true. If RECENT says the search did not navigate, click the search/submit button instead of typing again.
+- Only the viewport is listed: scroll to reveal more; use read_page to read text content (articles, results, prices, answers, summaries). Don't scroll more than a few times on one page, and never back and forth; read_page gives you the whole page's text at once.
 - If the last outcome was "no visible change", do not repeat the same action; try another element, scroll, read_page, or go_back.
 - request_screenshot only when the element list is genuinely insufficient (icon-only controls, canvas, visual layout). Never twice for the same page.
 - Values shown as [redacted] are private. Never type passwords, OTPs, card numbers, emails, phone numbers or addresses yourself: call request_user_input so the human fills them in.
@@ -91,10 +91,13 @@ def compact_elements(raw_elements: list[dict]) -> list[dict]:
 
         label = _clip(el.get("text") or el.get("aria_label"))
         parts = [head]
-        if el.get("redacted"):
-            parts.append(f"[redacted:{el.get('redaction_reason') or 'pii'}]")
-        elif label:
+        if label:
+            # Redacted text arrives with [REDACTED] placeholders already in place,
+            # so the non-private rest of the label ("Order ID [REDACTED] shipped")
+            # still tells elements apart.
             parts.append(f'"{label}"')
+        elif el.get("redacted"):
+            parts.append(f"[redacted:{el.get('redaction_reason') or 'pii'}]")
         placeholder = _clip(el.get("placeholder"), 40)
         if placeholder and placeholder != label:
             parts.append(f'ph="{placeholder}"')
@@ -126,6 +129,21 @@ def render_elements(elements: list[dict]) -> str:
 def page_signature(url: str, elements: list[dict]) -> str:
     base = strip_fragment(url) + "\n" + "\n".join(sorted(el["body"] for el in elements))
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
+
+
+def element_hashes(elements: list[dict]) -> list[str]:
+    """Short hashes of element bodies (max MAX_ELEMENTS), so the observer can
+    measure HOW MUCH the page changed -- a dropdown or a rotating ad changes
+    page_signature but leaves most of these intact."""
+    return sorted({hashlib.sha1(el["body"].encode("utf-8")).hexdigest()[:8] for el in elements})[:MAX_ELEMENTS]
+
+
+def overlap(a: list[str] | None, b: list[str] | None) -> float:
+    """Jaccard similarity of two hash lists (1.0 = same elements)."""
+    set_a, set_b = set(a or []), set(b or [])
+    if not set_a and not set_b:
+        return 1.0
+    return len(set_a & set_b) / len(set_a | set_b)
 
 
 def strip_fragment(url: str | None) -> str:

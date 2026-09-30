@@ -38,9 +38,20 @@ ACTOR_MODEL = _required("ACTOR_MODEL")
 PLANNER_MODEL = _required("PLANNER_MODEL")
 READER_MODEL = _required("READER_MODEL")
 
-ACTOR_MAX_TOKENS = _int("ACTOR_MAX_TOKENS", 200)
+# Sized to fit each node's own output: a cut-off tool call / JSON is lost
+# entirely (the reader's schema alone allows ~80 + 150 words).
+ACTOR_MAX_TOKENS = _int("ACTOR_MAX_TOKENS", 400)
 PLANNER_MAX_TOKENS = _int("PLANNER_MAX_TOKENS", 350)
-READER_MAX_TOKENS = _int("READER_MAX_TOKENS", 250)
+READER_MAX_TOKENS = _int("READER_MAX_TOKENS", 500)
+# Per-request timeout; the SDK default (600 s, 2 retries) could freeze a task for 10+ minutes.
+LLM_TIMEOUT_SECONDS = _int("LLM_TIMEOUT_SECONDS", 45)
+
+# --- Access ------------------------------------------------------------------
+# Browsers always send an Origin header, so this stops ordinary web pages
+# from driving the agent (and spending the API key) via ws://localhost.
+# Extension origins (chrome-extension://...) are allowed; list specific ones
+# here to pin a single extension id, e.g. chrome-extension://abcdefghijklmnop
+ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
 # --- Budgets ---------------------------------------------------------------
 MAX_TOTAL_STEPS = _int("MAX_TOTAL_STEPS", 30)

@@ -31,12 +31,13 @@ class AgentState(TypedDict, total=False):
     page_sig: str
     screenshot_available: bool
 
-    last_action: Optional[dict]      # {type, submit, desc, url, page_sig} awaiting an outcome
-    recent_fps: list[str]            # page_sig|action, for loop detection
+    last_action: Optional[dict]      # {type, submit, desc, url, page_sig, hashes} awaiting an outcome
+    recent_fps: list[str]            # url|action, for loop detection
     stuck_level: int                 # consecutive actions with no visible effect
 
     screenshot_sigs: list[str]
     screenshots_used: int
+    read_sigs: list[str]             # page_sigs already sent through read_page
     replan_count: int
     total_steps: int
 
