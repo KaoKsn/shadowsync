@@ -414,7 +414,7 @@ function runAgentSequence(userText) {
     chrome.scripting.executeScript(
       {
         target: { tabId: activeTabId },
-        files:  ['content/pii-config.js', 'content/pii-autofill.js', 'content/agent.js'],
+        files:  ['content/redactor.js', 'content/pii-config.js', 'content/pii-autofill.js', 'content/pii-guard.js', 'content/agent.js'],
       },
       () => {
         if (chrome.runtime.lastError) {

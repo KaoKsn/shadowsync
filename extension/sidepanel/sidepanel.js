@@ -548,6 +548,7 @@
                 'content/qrMask.js',
                 'content/pii-config.js',
                 'content/pii-autofill.js',
+                'content/pii-guard.js',
                 'content/agent.js',
               ],
             },

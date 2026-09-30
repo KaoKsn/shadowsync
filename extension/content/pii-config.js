@@ -176,6 +176,7 @@
       storageKeys: {
         profile: 'privsightProfile',            // { [fieldKey]: string }
         settings: 'privsightAutofillSettings',  // { enabled, sensitiveSites: [origin] }
+        guard: 'privsightPiiGuard',             // { enabled } text-box PII warning (pii-guard.js)
       },
       defaultSettings: { enabled: true, sensitiveSites: [] },
     }),

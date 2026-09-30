@@ -195,7 +195,13 @@
   }
 
   async function init() {
-    const items = await storageGet([KEYS.profile, KEYS.settings]);
+    const items = await storageGet([KEYS.profile, KEYS.settings, KEYS.guard]);
+
+    $('pf-guard').checked = items[KEYS.guard]?.enabled !== false;
+    $('pf-guard').addEventListener('change', async (event) => {
+      await storageSet({ [KEYS.guard]: { enabled: event.target.checked } });
+      showStatus(event.target.checked ? 'Personal data warnings on' : 'Personal data warnings off');
+    });
     const profile = items[KEYS.profile] && typeof items[KEYS.profile] === 'object' ? items[KEYS.profile] : {};
     const stored = items[KEYS.settings] || {};
     settings = {

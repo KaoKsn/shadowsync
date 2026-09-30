@@ -171,6 +171,42 @@
     return { value: v.re, valueKeys: v.keys, word: w.re, wordKeys: w.keys };
   }
 
+  // Typed spans for callers that need to show / replace individual findings
+  // (the text-box PII guard) rather than get a redacted string back.
+  const FIND_PATTERNS = [
+    ["EMAIL", PII_PATTERNS.email],
+    ["AADHAAR", PII_PATTERNS.aadhaar],
+    ["PAN", PII_PATTERNS.pan],
+    ["IFSC", PII_PATTERNS.ifsc],
+    ["PASSPORT", PII_PATTERNS.indianPassport],
+    ["SSN", PII_PATTERNS.ssn],
+    ["JWT", PII_PATTERNS.jwt],
+    ["API_KEY", PII_PATTERNS.vendorApiKey],
+    ["PHONE", PII_PATTERNS.phone],
+  ];
+
+  /**
+   * Finds PII in `text` with the local regex rules (no NER).
+   * @returns {{type: string, text: string, start: number, end: number}[]} non-overlapping, in order
+   */
+  function findPII(text) {
+    if (!text || typeof text !== "string") return [];
+    const found = [];
+    const taken = (s, e) => found.some((f) => s < f.end && f.start < e);
+    const add = (type, s, e) => { if (!taken(s, e)) found.push({ type, text: text.slice(s, e), start: s, end: e }); };
+
+    // Cards first (Luhn-checked) so their digits aren't read as phones / Aadhaar
+    for (const m of text.matchAll(/\b(?:\d[ -]*?){13,19}\b/g)) {
+      if (isValidLuhn(m[0])) add("CREDIT_CARD", m.index, m.index + m[0].length);
+    }
+    for (const [type, re] of FIND_PATTERNS) {
+      for (const m of text.matchAll(new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"))) {
+        add(type, m.index, m.index + m[0].length);
+      }
+    }
+    return found.sort((a, b) => a.start - b.start);
+  }
+
   /** Replaces profile matches; records a count per profile key (never the value). */
   function redactProfile(text, stats, profile) {
     const pass = (input, re, keys) => {
@@ -852,6 +888,7 @@
   DOMRedactor.redactString = redactString;
   DOMRedactor.compileTerms = compileTerms;
   DOMRedactor.compileProfile = compileProfile;
+  DOMRedactor.findPII = findPII;
 
   return DOMRedactor;
 });
