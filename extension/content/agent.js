@@ -513,6 +513,114 @@
     return redactorInstance;
   }
 
+  // ─── Local PII Engine (offscreen NER + rules, see offscreen/ner.js) ─────
+  // Visible text goes to the extension's own offscreen document (never off-device).
+  // The engine returns PII strings; redactor.js then redacts them in the live DOM.
+  const PII_TIMEOUT_MS = 3000;     // past this, capture proceeds with regex-only redaction
+  const PII_MAX_SEGMENTS = 150;
+  const PII_MAX_CHARS = 12000;
+  const PII_BLOCK_TAGS = /^(?:P|DIV|LI|TD|TH|DT|DD|H[1-6]|SECTION|ARTICLE|HEADER|FOOTER|MAIN|ASIDE|NAV|FORM|FIELDSET|LABEL|BLOCKQUOTE|PRE|TR|UL|OL|FIGCAPTION|BUTTON|BODY)$/;
+  const PII_SKIP_TAGS = /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG)$/;
+  const PII_UI_SELECTOR = '#privsight-overlay, #privsight-hint-container, .privsight-shell, .llm-hint-badge';
+
+  /** Text of the viewport (± one screen, in case the agent scrolls), grouped by block element. */
+  function collectVisibleSegments() {
+    const vpHeight = window.innerHeight || document.documentElement.clientHeight;
+    const root = document.body || document.documentElement;
+    const visibleCache = new Map();
+    const isVisible = (el) => {
+      if (visibleCache.has(el)) return visibleCache.get(el);
+      let ok = !PII_SKIP_TAGS.test(el.tagName.toUpperCase()) && !el.closest(PII_UI_SELECTOR);
+      if (ok) {
+        const rect = el.getBoundingClientRect();
+        ok = rect.width > 0 && rect.height > 0 && rect.bottom > -vpHeight && rect.top < vpHeight * 2;
+      }
+      visibleCache.set(el, ok);
+      return ok;
+    };
+    const blockOf = (el) => {
+      let cur = el;
+      while (cur && cur !== root && !PII_BLOCK_TAGS.test(cur.tagName.toUpperCase())) cur = cur.parentElement;
+      return cur || root;
+    };
+
+    const blocks = new Map(); // block element -> text pieces
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent || !/[A-Za-z0-9]/.test(node.nodeValue || '') || !isVisible(parent)) continue;
+      const block = blockOf(parent);
+      if (!blocks.has(block)) blocks.set(block, []);
+      blocks.get(block).push(node.nodeValue.trim());
+    }
+
+    const segments = new Set();
+    for (const pieces of blocks.values()) segments.add(pieces.join(' ').replace(/\s+/g, ' ').trim());
+    document.querySelectorAll('input, textarea').forEach((el) => {
+      if ((el.type || '').toLowerCase() === 'password' || !isVisible(el)) return;
+      if (el.value && el.value.trim()) segments.add(el.value.trim());
+    });
+
+    const out = [];
+    let total = 0;
+    for (const text of segments) {
+      if (!text || out.length >= PII_MAX_SEGMENTS || total >= PII_MAX_CHARS) break;
+      const clipped = text.slice(0, 2000);
+      out.push(clipped);
+      total += clipped.length;
+    }
+    return out;
+  }
+
+  /** Ask the offscreen engine for PII in `texts`; resolves null on timeout / error (rules-only). */
+  function analyzePii(texts) {
+    if (!texts.length) return Promise.resolve(null);
+    const started = performance.now();
+    return new Promise((resolve) => {
+      const fail = (why) => {
+        console.warn(`[PrivSight] PII engine unavailable (${why}), using rules-only redaction.`);
+        resolve(null);
+      };
+      const timer = setTimeout(() => fail(`timed out after ${PII_TIMEOUT_MS}ms`), PII_TIMEOUT_MS);
+      try {
+        chrome.runtime.sendMessage({ type: 'PII_ANALYZE', texts }, (resp) => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !resp?.ok) {
+            fail(chrome.runtime.lastError?.message || resp?.error || 'no response');
+            return;
+          }
+          console.debug(`[PrivSight] PII engine: ${texts.length} segments in ${Math.round(performance.now() - started)}ms `
+            + `(engine ${resp.ms}ms, NER ${resp.nerUsed ? 'on' : 'off'})`);
+          resolve(resp);
+        });
+      } catch (err) {
+        clearTimeout(timer);
+        fail(err.message);
+      }
+    });
+  }
+
+  /**
+   * Entity strings to redact everywhere on the page. Name words (filtered by the engine) are
+   * added too, so "<b>Priya</b> Sharma" (split across text nodes) and later "Priya" are caught.
+   */
+  function entitiesToTerms(resp) {
+    const terms = new Set();
+    for (const list of resp?.entities || []) {
+      for (const e of list) {
+        const text = (e.text || '').trim();
+        if (text.length >= 3) terms.add(text);
+        (e.words || []).forEach((w) => terms.add(w));
+      }
+    }
+    return [...terms];
+  }
+
+  async function getPiiTerms(texts) {
+    return entitiesToTerms(await analyzePii(texts));
+  }
+
   function generateHintString(index, chars) {
     let hint = '';
     let len = chars.length;
@@ -545,13 +653,16 @@
     activeHints.clear();
     const redactor = getRedactor();
 
-    // 1. Redact live DOM in-place, keeping track of undo list and scrubbing stats
+    // 1. Redact live DOM in-place, keeping track of undo list and scrubbing stats.
+    //    The local PII engine (NER + rules) runs first; its findings are redacted
+    //    together with redactor.js's own patterns so one undoList restores both.
     let undoList = [];
     let scrubbingStats = { dataFound: 0, sensitiveRecognized: 0, sensitiveRemoved: 0 };
 
     if (redactor && typeof redactor.redactLiveDOM === 'function') {
       try {
-        const redactResult = redactor.redactLiveDOM(document.body || document.documentElement);
+        const extraTerms = await getPiiTerms(collectVisibleSegments());
+        const redactResult = redactor.redactLiveDOM(document.body || document.documentElement, { extraTerms });
         undoList = redactResult.undoList || [];
         const s = redactResult.stats || {};
         let sensitiveCount = 0;
@@ -1079,14 +1190,17 @@
 
   // ─── Page Text Reader ───────────────────────────────────
   // Visible text of the main content, PII-scrubbed locally before it leaves the page.
-  function readPageText(maxChars) {
+  async function readPageText(maxChars) {
     // innerText only returns rendered text: no scripts/styles, no form field values.
     const root = document.querySelector('main, [role="main"], article') || document.body;
     let text = (root.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (text.length > maxChars) text = text.slice(0, maxChars) + '…';
     if (typeof DOMRedactor !== 'undefined' && typeof DOMRedactor.redactString === 'function') {
-      text = DOMRedactor.redactString(text, null);
+      const paragraphs = text.split(/\n{2,}/).filter((p) => /[A-Za-z0-9]/.test(p)).slice(0, PII_MAX_SEGMENTS);
+      const terms = DOMRedactor.compileTerms ? DOMRedactor.compileTerms(await getPiiTerms(paragraphs)) : null;
+      text = DOMRedactor.redactString(text, null, terms);
     }
-    return text.length > maxChars ? text.slice(0, maxChars) + '…' : text;
+    return text;
   }
 
   // ─── Chrome Message Handlers ─────────────────────────────
@@ -1163,11 +1277,9 @@
 
     // 3b. Read page text (redacted) for the backend's read_page action
     if (message.type === 'READ_PAGE') {
-      try {
-        sendResponse({ ok: true, text: readPageText(message.maxChars || 6000) });
-      } catch (err) {
-        sendResponse({ ok: false, error: err.message });
-      }
+      readPageText(message.maxChars || 6000)
+        .then((text) => sendResponse({ ok: true, text }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
       return true;
     }
 

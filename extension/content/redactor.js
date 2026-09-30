@@ -86,12 +86,29 @@
   };
 
   /**
+   * Compiles extra PII strings (found by the offscreen NER/PII engine) into one
+   * whole-word, case-sensitive regex (so a name like "Will" leaves the verb "will" alone).
+   * Longest first so "Priya Sharma" beats "Priya".
+   * @param {string[]} terms
+   * @returns {RegExp|null}
+   */
+  function compileTerms(terms) {
+    const list = Array.from(new Set((terms || []).map((t) => String(t || "").trim())))
+      .filter((t) => t.length >= 3)
+      .sort((a, b) => b.length - a.length)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"));
+    if (!list.length) return null;
+    return new RegExp(`(?<![\\p{L}\\p{N}])(?:${list.join("|")})(?![\\p{L}\\p{N}])`, "gu");
+  }
+
+  /**
    * Redacts PII in a given text string.
    * @param {string} text
    * @param {object} stats - Counter object to track redactions by type
+   * @param {RegExp|null} [terms] - Extra PII strings from compileTerms()
    * @returns {string} Redacted text
    */
-  function redactString(text, stats) {
+  function redactString(text, stats, terms) {
     if (!text || typeof text !== "string") return text;
 
     let result = text;
@@ -100,6 +117,14 @@
       if (stats && stats[type] !== undefined) {
         stats[type] += count;
       }
+    }
+
+    // Engine/NER entities first: they were detected on the original, unredacted text
+    if (terms) {
+      result = result.replace(terms, () => {
+        recordRedaction("entity");
+        return "[REDACTED]";
+      });
     }
 
     // Indian PAN
@@ -217,18 +242,18 @@
    * @param {string} href
    * @param {object} stats
    */
-  function redactHref(href, stats) {
+  function redactHref(href, stats, terms) {
     if (!href) return href;
     if (href.startsWith("mailto:")) {
       const emailPart = href.substring(7);
-      const redactedEmail = redactString(emailPart, stats);
+      const redactedEmail = redactString(emailPart, stats, terms);
       return "mailto:" + redactedEmail;
     }
     if (href.startsWith("tel:")) {
       if (stats && stats.phone !== undefined) stats.phone++;
       return "tel:[REDACTED]";
     }
-    return redactString(href, stats);
+    return redactString(href, stats, terms);
   }
 
   class DOMRedactor {
@@ -457,10 +482,13 @@
      * Records all modifications in an undoList and tracks PII stats.
      * Skips extension overlay elements and script/style tags.
      * @param {Node} rootNode
+     * @param {{extraTerms?: string[]}} [opts] - extraTerms: PII strings from the offscreen engine
      * @returns {{undoList: Array<object>, stats: object}}
      */
-    redactLiveDOM(rootNode = (document.body || document.documentElement)) {
+    redactLiveDOM(rootNode = (document.body || document.documentElement), opts = {}) {
+      const terms = compileTerms(opts.extraTerms);
       const stats = {
+        entity: 0,
         password: 0,
         aadhaar: 0,
         indianPassport: 0,
@@ -501,7 +529,7 @@
         if (node.nodeType === Node.TEXT_NODE) {
           if (this.options.redactTextNodes && node.nodeValue) {
             const originalVal = node.nodeValue;
-            const redactedVal = redactString(originalVal, stats);
+            const redactedVal = redactString(originalVal, stats, terms);
             if (redactedVal !== originalVal) {
               node.nodeValue = redactedVal;
               undoList.push({ type: "text", node, value: originalVal });
@@ -592,14 +620,14 @@
                 }
               } else {
                 if (originalPropValue) {
-                  const redacted = redactString(originalPropValue, stats);
+                  const redacted = redactString(originalPropValue, stats, terms);
                   if (redacted !== originalPropValue) {
                     node.value = redacted;
                     changed = true;
                   }
                 }
                 if (hadAttr && originalAttrValue) {
-                  const redactedAttr = redactString(originalAttrValue, stats);
+                  const redactedAttr = redactString(originalAttrValue, stats, terms);
                   if (redactedAttr !== originalAttrValue) {
                     node.setAttribute("value", redactedAttr);
                     changed = true;
@@ -625,9 +653,9 @@
               const originalVal = node.getAttribute(attrName);
               let redactedVal;
               if (attrName === "href") {
-                redactedVal = redactHref(originalVal, stats);
+                redactedVal = redactHref(originalVal, stats, terms);
               } else {
-                redactedVal = redactString(originalVal, stats);
+                redactedVal = redactString(originalVal, stats, terms);
               }
               if (redactedVal !== originalVal) {
                 node.setAttribute(attrName, redactedVal);
@@ -717,6 +745,7 @@
   // Expose helper functions and class
   DOMRedactor.isValidLuhn = isValidLuhn;
   DOMRedactor.redactString = redactString;
+  DOMRedactor.compileTerms = compileTerms;
 
   return DOMRedactor;
 });

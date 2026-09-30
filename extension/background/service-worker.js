@@ -29,7 +29,44 @@ chrome.runtime.onInstalled.addListener(() => {
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
   }
+  warmUpPiiEngine();
 });
+
+// ── Local PII Engine (offscreen document hosting the NER model) ──
+// Content scripts can't start extension workers and the service worker has no DOM,
+// so the engine + model live in one offscreen document shared by all tabs.
+const OFFSCREEN_URL = 'offscreen/ner.html';
+let creatingOffscreen = null;
+
+async function ensureOffscreen() {
+  if (!chrome.offscreen) throw new Error('Offscreen API unavailable');
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+  });
+  if (contexts.length) return;
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen.createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ['WORKERS'],
+      justification: 'Runs the local PII/NER model so page data is redacted on-device.',
+    }).finally(() => { creatingOffscreen = null; });
+  }
+  await creatingOffscreen;
+}
+
+async function sendToPiiEngine(message) {
+  await ensureOffscreen();
+  return chrome.runtime.sendMessage({ ...message, target: 'offscreen' });
+}
+
+function warmUpPiiEngine() {
+  sendToPiiEngine({ type: 'PII_WARMUP' }).catch((err) => {
+    console.warn('[PrivSight SW] PII engine warm-up failed:', err?.message || err);
+  });
+}
+
+chrome.runtime.onStartup.addListener(warmUpPiiEngine);
 
 // ── Execution State Persistence (chrome.storage.session) ──
 const SESSION_STATE_KEY = 'privsight_execution_state';
@@ -123,6 +160,7 @@ chrome.runtime.onConnect.addListener((port) => {
         }
       } else if (msg.type === 'SESSION_START') {
         targetTabId = msg.tabId || targetTabId;
+        warmUpPiiEngine();
         const state = {
           sessionId: msg.sessionId,
           tabId: msg.tabId,
@@ -180,6 +218,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: err.message });
     }
     return true; // Keep message channel open for asynchronous sendResponse
+  }
+
+  // Content script -> offscreen PII engine (entities per text, computed locally)
+  if (message.type === 'PII_ANALYZE' && message.target !== 'offscreen') {
+    sendToPiiEngine({ type: 'PII_ANALYZE', texts: message.texts || [] })
+      .then((res) => sendResponse(res || { ok: false, error: 'No response from PII engine' }))
+      .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+    return true;
   }
 
   if (message.action === 'UPDATE_CLICKABLES') {

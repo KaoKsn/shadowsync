@@ -660,6 +660,24 @@ Here is exactly what happens when a user uses PrivSight, in order:
 
 ## 11. How to Load and Test the Extension
 
+### Bundle the local PII engine + NER model (once, and before every Web Store upload)
+
+The on-device NER model (DistilBERT-NER, ~66 MB) and the Script Redaction engine are copied into `lib/pii/`. That folder is generated and gitignored, so build it before loading or zipping the extension:
+
+```bash
+cd "../Script Redaction"
+npm install
+npm run setup:ner          # downloads the model + vendors Transformers.js (developer machine only)
+npm run build:extension    # copies engine + runtime + model into extension/lib/pii/ (~86 MB)
+```
+
+End users download everything inside the extension package. Nothing is fetched at runtime.
+
+How it runs:
+- `offscreen/ner.html` loads the model once per browser session. It warms up at browser start and when an agent session starts.
+- Before every screenshot, `content/agent.js` sends the visible text to it and redacts the entities it returns together with `content/redactor.js`'s patterns.
+- If the engine doesn't answer within 3 s, capture falls back to regex-only redaction and logs a warning.
+
 ### Loading it into Chrome
 
 1. Open Chrome and go to: `chrome://extensions`
