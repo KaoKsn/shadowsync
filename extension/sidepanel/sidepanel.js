@@ -720,6 +720,9 @@
     // Track the previous snapshot's elements so we can compute changed_since_last_step
     let prevElements = [];
     let lastElements = [];  // elements from the most recent snapshot (reused for screenshot calls)
+    // Per-type redaction counts for the dashboard (keys match redactor.js stats)
+    const breakdown = {};
+    const startedAt = Date.now();
 
     updateAgentStatus('connecting');
     renderActivity('connecting', 'Connecting to agent...');
@@ -774,6 +777,9 @@
           stats.dataFound += capturedState.stats.dataFound || 0;
           stats.sensitiveRecognized += capturedState.stats.sensitiveRecognized || 0;
           stats.sensitiveRemoved += capturedState.stats.sensitiveRemoved || 0;
+          Object.entries(capturedState.stats.breakdown || {}).forEach(([k, v]) => {
+            breakdown[k] = (breakdown[k] || 0) + (v || 0);
+          });
           updatePrivacyStats(stats);
         }
 
@@ -979,6 +985,9 @@
           protectionRate: stats.sensitiveRecognized > 0
             ? Math.round((stats.sensitiveRemoved / stats.sensitiveRecognized) * 100)
             : 100,
+          breakdown,
+          steps: stepCount,
+          durationMs: Date.now() - startedAt,
         });
       } else if (!activeLoopAborted) {
         updateAgentStatus('idle');

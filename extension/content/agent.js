@@ -666,13 +666,18 @@
         undoList = redactResult.undoList || [];
         const s = redactResult.stats || {};
         let sensitiveCount = 0;
+        const breakdown = {};
         Object.keys(s).forEach((k) => {
-          if (typeof s[k] === 'number' && k !== 'total') sensitiveCount += s[k];
+          if (typeof s[k] === 'number' && k !== 'total') {
+            sensitiveCount += s[k];
+            if (s[k] > 0) breakdown[k] = s[k];
+          }
         });
         scrubbingStats = {
           dataFound: sensitiveCount,
           sensitiveRecognized: sensitiveCount,
           sensitiveRemoved: sensitiveCount,
+          breakdown,
         };
       } catch (redactErr) {
         console.warn('[PrivSight] Live DOM redaction error:', redactErr);

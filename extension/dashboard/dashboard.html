@@ -1,213 +1,338 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PrivSight — Analytics Dashboard</title>
-  <meta name="description" content="PrivSight all-time privacy analytics dashboard. View session history, protection rates, data type breakdowns, and top protected domains." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&display=swap" rel="stylesheet" />
+  <meta name="description" content="PrivSight privacy analytics: what was redacted, where, and when — computed locally from your session history." />
   <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
 
-
-
   <!-- ══════════════════════════════════════════════════════
        TOPBAR
   ══════════════════════════════════════════════════════ -->
-  <header class="db-topbar" id="db-topbar">
+  <header class="db-topbar">
     <div class="db-topbar__inner">
-      <div class="db-topbar__brand">
-        <div class="db-brand-logo" id="db-brand-logo">
-          <img src="../icons/icon128.png" alt="PrivSight" class="db-brand-logo-img">
-        </div>
-        <span class="db-brand-name">PrivSight</span>
-        <span class="db-brand-sep">/</span>
-        <span class="db-brand-page">Analytics Dashboard</span>
+      <div class="db-brand">
+        <img src="../icons/icon128.png" alt="" class="db-brand__logo" />
+        <span class="db-brand__name">PrivSight</span>
+        <span class="db-brand__sep" aria-hidden="true">/</span>
+        <span class="db-brand__page">Analytics</span>
       </div>
 
       <div class="db-topbar__actions">
-        <span class="db-last-updated" id="db-last-updated">Loading...</span>
+        <div class="db-seg" id="db-range" role="radiogroup" aria-label="Time range">
+          <button class="db-seg__btn" role="radio" data-range="7">7D</button>
+          <button class="db-seg__btn" role="radio" data-range="30">30D</button>
+          <button class="db-seg__btn" role="radio" data-range="all">All</button>
+        </div>
 
-        <button class="db-btn db-btn--ghost" id="db-export-btn" title="Export history as CSV">
+        <button class="db-icon-btn" id="db-theme-btn" title="Toggle theme" aria-label="Toggle light / dark theme">
+          <svg class="db-ico-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="db-ico-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+
+        <button class="db-btn db-btn--ghost" id="db-export-btn" title="Export session history as CSV">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Export CSV
+          <span class="db-hide-sm">Export CSV</span>
         </button>
       </div>
     </div>
   </header>
 
-  <!-- ══════════════════════════════════════════════════════
-       MAIN
-  ══════════════════════════════════════════════════════ -->
-  <main class="db-main" id="db-main">
+  <main class="db-main">
 
-    <!-- Hero banner -->
-    <section class="db-hero" id="db-hero">
-      <div class="db-hero__glow" aria-hidden="true"></div>
-      <div class="db-hero__content">
-        <div class="db-hero__title-group">
+    <!-- ── Hero ─────────────────────────────────────────── -->
+    <section class="db-hero">
+      <div class="db-hero__head">
+        <div class="db-hero__intro">
           <h1 class="db-hero__title">Privacy Analytics</h1>
-          <p class="db-hero__sub">All-time protection statistics across every session</p>
+          <p class="db-hero__sub" id="db-hero-sub">Loading your history…</p>
+          <p class="db-hero__tag">Page data passes through PrivSight's on-device detectors. Only the masked version reaches the AI.</p>
+          <div class="db-live" id="db-live" title="Updates automatically when a session finishes">
+            <span class="db-live__dot"></span>
+            <span id="db-last-updated">Live</span>
+          </div>
         </div>
 
-        <div class="db-hero__stats" id="db-hero-stats">
-          <div class="db-hstat" id="db-hstat-sessions">
-            <span class="db-hstat__num" id="db-total-sessions">0</span>
-            <span class="db-hstat__lbl">Sessions Run</span>
-          </div>
-          <div class="db-hstat__div" aria-hidden="true"></div>
-          <div class="db-hstat" id="db-hstat-found">
-            <span class="db-hstat__num" id="db-total-found">0</span>
-            <span class="db-hstat__lbl">Data Points Found</span>
-          </div>
-          <div class="db-hstat__div" aria-hidden="true"></div>
-          <div class="db-hstat" id="db-hstat-sensitive">
-            <span class="db-hstat__num" id="db-total-sensitive">0</span>
-            <span class="db-hstat__lbl">Sensitive Items</span>
-          </div>
-          <div class="db-hstat__div" aria-hidden="true"></div>
-          <div class="db-hstat" id="db-hstat-removed">
-            <span class="db-hstat__num" id="db-total-removed">0</span>
-            <span class="db-hstat__lbl">Items Removed</span>
-          </div>
-          <div class="db-hstat__div" aria-hidden="true"></div>
-          <div class="db-hstat db-hstat--accent" id="db-hstat-rate">
-            <span class="db-hstat__num db-hstat__num--big" id="db-protection-rate">0%</span>
-            <span class="db-hstat__lbl">Protection Rate</span>
-          </div>
-        </div>
+        <!-- Circuit: categories flow into the hub, only masked output flows out -->
+        <svg class="db-circuit" id="db-circuit" viewBox="0 0 600 420" role="img" aria-label="Diagram: detected categories and PrivSight detectors feed the hub; only masked data goes to the server and on to the LLM, whose actions come back to the hub">
+          <defs>
+            <linearGradient id="cx-fade" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fff" stop-opacity="0" />
+              <stop offset="0.35" stop-color="#fff" stop-opacity="1" />
+              <stop offset="1" stop-color="#fff" stop-opacity="1" />
+            </linearGradient>
+            <mask id="cx-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="600" height="170">
+              <rect width="600" height="170" fill="url(#cx-fade)" />
+            </mask>
+            <radialGradient id="cx-glow">
+              <stop offset="0" class="cx-glow-stop" stop-opacity="0.55" />
+              <stop offset="0.45" class="cx-glow-stop" stop-opacity="0.16" />
+              <stop offset="1" class="cx-glow-stop" stop-opacity="0" />
+            </radialGradient>
+          </defs>
+
+          <!-- Hub glow sits under everything -->
+          <circle class="cx-halo" cx="300" cy="190" r="120" fill="url(#cx-glow)" />
+
+          <!-- Page data streaming down from the top -->
+          <g mask="url(#cx-mask)">
+            <path class="cx-trace cx-trace--dim"  data-flow="bus" d="M200,0 V44 H248 V92" />
+            <path class="cx-trace cx-trace--lit"  data-flow="bus" d="M236,0 V70 H276 V112 H300" />
+            <path class="cx-trace cx-trace--main" data-flow="bus" d="M300,0 V160" />
+            <path class="cx-trace cx-trace--lit"  data-flow="bus" d="M378,0 V132 H300" />
+            <path class="cx-trace cx-trace--dim"  data-flow="bus" d="M340,0 V96 H316 V132" />
+          </g>
+
+          <!-- Left: what gets detected on the page -->
+          <g class="cx-row" data-cat="identity">
+            <text x="150" y="136" text-anchor="end">Identity</text>
+            <svg class="cx-ico" x="158" y="125" width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="12" r="2"/><path d="M14 10h4M14 14h4"/></svg>
+            <path class="cx-trace" data-flow="in" d="M180,132 H214 V174 H270" />
+            <circle class="cx-dot" cx="214" cy="132" r="3" />
+          </g>
+          <g class="cx-row" data-cat="financial">
+            <text x="150" y="165" text-anchor="end">Financial</text>
+            <svg class="cx-ico" x="158" y="154" width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+            <path class="cx-trace" data-flow="in" d="M180,161 H232 V182 H270" />
+            <circle class="cx-dot" cx="232" cy="161" r="3" />
+          </g>
+          <g class="cx-row" data-cat="contact">
+            <text x="150" y="194" text-anchor="end">Contact</text>
+            <svg class="cx-ico" x="158" y="183" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
+            <path class="cx-trace" data-flow="in" d="M180,190 H270" />
+            <circle class="cx-dot" cx="246" cy="190" r="3" />
+          </g>
+          <g class="cx-row" data-cat="credentials">
+            <text x="150" y="223" text-anchor="end">Credentials</text>
+            <svg class="cx-ico" x="158" y="212" width="14" height="14" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3M19 4l2 2"/></svg>
+            <path class="cx-trace" data-flow="in" d="M180,219 H232 V198 H270" />
+            <circle class="cx-dot" cx="232" cy="219" r="3" />
+          </g>
+          <g class="cx-row" data-cat="names">
+            <text x="150" y="252" text-anchor="end">Names</text>
+            <svg class="cx-ico" x="158" y="241" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+            <path class="cx-trace" data-flow="in" d="M180,248 H214 V206 H270" />
+            <circle class="cx-dot" cx="214" cy="248" r="3" />
+          </g>
+
+          <!-- Right: the on-device detectors -->
+          <g class="cx-row cx-row--side">
+            <path class="cx-trace" data-flow="side" d="M420,132 H386 V174 H330" />
+            <circle class="cx-dot" cx="386" cy="132" r="3" />
+            <svg class="cx-ico" x="428" y="125" width="14" height="14" viewBox="0 0 24 24"><path d="M17 3v10M12.7 5.5l8.6 5M12.7 10.5l8.6-5"/><rect x="3" y="15" width="6" height="6" rx="1"/></svg>
+            <text x="450" y="136">Regex rules</text>
+          </g>
+          <g class="cx-row cx-row--side">
+            <path class="cx-trace" data-flow="side" d="M420,161 H368 V182 H330" />
+            <circle class="cx-dot" cx="368" cy="161" r="3" />
+            <svg class="cx-ico" x="428" y="154" width="14" height="14" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+            <text x="450" y="165">NER model</text>
+          </g>
+          <g class="cx-row cx-row--side">
+            <path class="cx-trace" data-flow="side" d="M420,190 H330" />
+            <circle class="cx-dot" cx="354" cy="190" r="3" />
+            <svg class="cx-ico" x="428" y="183" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
+            <text x="450" y="194">Checksums</text>
+          </g>
+          <g class="cx-row cx-row--side">
+            <path class="cx-trace" data-flow="side" d="M420,219 H368 V198 H330" />
+            <circle class="cx-dot" cx="368" cy="219" r="3" />
+            <svg class="cx-ico" x="428" y="212" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+            <text x="450" y="223">Face blur</text>
+          </g>
+          <g class="cx-row cx-row--side">
+            <path class="cx-trace" data-flow="side" d="M420,248 H386 V206 H330" />
+            <circle class="cx-dot" cx="386" cy="248" r="3" />
+            <svg class="cx-ico" x="428" y="241" width="14" height="14" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h7v-4"/></svg>
+            <text x="450" y="252">QR masking</text>
+          </g>
+
+          <!-- Bottom: masked data → Server → LLM, actions back to the hub -->
+          <path class="cx-trace cx-trace--lit" data-flow="out"  d="M290,220 V290 H206 V334" />
+          <path class="cx-trace cx-trace--lit" data-flow="link" d="M266,352 H334" />
+          <path class="cx-trace cx-trace--lit" data-flow="back" d="M394,334 V290 H310 V220" />
+          <circle class="cx-dot" cx="206" cy="290" r="3" />
+          <circle class="cx-dot" cx="394" cy="290" r="3" />
+
+          <g class="cx-node">
+            <title>PrivSight agent server: receives only the masked page and clean screenshot</title>
+            <rect class="cx-pill" x="146" y="334" width="120" height="36" rx="10" />
+            <svg class="cx-ico" x="164" y="345" width="14" height="14" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg>
+            <text x="186" y="356">Server</text>
+          </g>
+          <g class="cx-node">
+            <title>The language model plans actions from masked data and never sees the raw values</title>
+            <rect class="cx-pill" x="334" y="334" width="120" height="36" rx="10" />
+            <svg class="cx-ico" x="364" y="345" width="14" height="14" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></svg>
+            <text x="386" y="356">LLM</text>
+          </g>
+          <text class="cx-caption" x="300" y="398" text-anchor="middle">masked data only · actions come back</text>
+
+          <!-- Hub -->
+          <rect class="cx-hub-glow" x="262" y="152" width="76" height="76" rx="20" />
+          <rect class="cx-hub" x="270" y="160" width="60" height="60" rx="15" />
+          <image href="../icons/icon128.png" x="283" y="173" width="34" height="34" />
+        </svg>
+      </div>
+
+      <div class="db-kpis" id="db-kpis">
+        <article class="db-kpi db-kpi--primary">
+          <span class="db-kpi__lbl">Items redacted</span>
+          <span class="db-kpi__num" id="kpi-redacted">0</span>
+          <span class="db-kpi__foot" id="kpi-redacted-foot">&nbsp;</span>
+        </article>
+        <article class="db-kpi">
+          <span class="db-kpi__lbl">Sessions</span>
+          <span class="db-kpi__num" id="kpi-sessions">0</span>
+          <span class="db-kpi__foot" id="kpi-sessions-foot">&nbsp;</span>
+        </article>
+        <article class="db-kpi">
+          <span class="db-kpi__lbl">Sites protected</span>
+          <span class="db-kpi__num" id="kpi-sites">0</span>
+          <span class="db-kpi__foot" id="kpi-sites-foot">&nbsp;</span>
+        </article>
+        <article class="db-kpi">
+          <span class="db-kpi__lbl">Most caught</span>
+          <span class="db-kpi__num db-kpi__num--text" id="kpi-top">—</span>
+          <span class="db-kpi__foot" id="kpi-top-foot">&nbsp;</span>
+        </article>
+      </div>
+
+      <div class="db-assure">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+        <span>Every detected item is masked in your browser before page data reaches the AI. These stats never leave this device.</span>
       </div>
     </section>
 
-    <!-- Empty state -->
-    <div class="db-empty" id="db-empty" style="display:none;">
-      <div class="db-empty__icon">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3.5 20V6C3.5 3.2 6.8 2.5 13.5 2.5L15 3.8L13 7.8"/>
-            <path d="M3.5 15.5L7 18L3.5 20"/>
-            <path d="M7 12.5C9 8.2 14 7.2 21 12.5C14 17.8 9 16.8 7 12.5Z"/>
-            <circle cx="13.5" cy="12.5" r="3"/>
-            <line x1="10.5" y1="18.5" x2="16" y2="6.5"/>
-          </svg>
+    <!-- ── Empty state (no history at all) ──────────────── -->
+    <section class="db-empty" id="db-empty" hidden>
+      <div class="db-empty__icon" aria-hidden="true">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       </div>
       <h2 class="db-empty__title">No sessions yet</h2>
-      <p class="db-empty__sub">Run your first PrivSight task in the side panel.<br>Your privacy analytics will appear here.</p>
-    </div>
+      <p class="db-empty__sub">Open the PrivSight side panel on any site and give it a task. When it finishes, you'll see here what it kept private.</p>
+      <ol class="db-empty__steps">
+        <li><span>1</span>Click the PrivSight icon in the toolbar</li>
+        <li><span>2</span>Describe a task, e.g. “fill this form with my details”</li>
+        <li><span>3</span>Come back here to see what was redacted</li>
+      </ol>
+    </section>
 
-    <!-- Grid layout -->
-    <div class="db-grid" id="db-grid" style="display:none;">
+    <!-- ── Dashboard grid ───────────────────────────────── -->
+    <div class="db-grid" id="db-grid" hidden>
 
-      <!-- Left column -->
-      <div class="db-col db-col--left">
-
-        <!-- Privacy Protection Pipeline (Moved from sidepanel) -->
-        <section class="db-card" id="db-card-pipeline">
-          <div class="db-card__head">
-            <h2 class="db-card__title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              Privacy Protection Pipeline
-            </h2>
-            <span class="db-pipeline-badge" id="db-pipeline-badge">
-              <span class="db-pipeline-dot"></span>
-              Protected
-            </span>
+      <!-- Activity chart -->
+      <section class="db-card db-card--chart">
+        <header class="db-card__head">
+          <div>
+            <h2 class="db-card__title">Redactions over time</h2>
+            <p class="db-card__sub" id="db-chart-sub">Items masked per day, by category</p>
           </div>
-          <div class="db-pipeline__flow">
-            <div class="db-pipeline__step">
-              <span class="db-pipeline__num" id="db-pipeline-found">0</span>
-              <span class="db-pipeline__lbl">Data Found</span>
-            </div>
-            <div class="db-pipeline__arrow">→</div>
-            <div class="db-pipeline__step">
-              <span class="db-pipeline__num" id="db-pipeline-sensitive">0</span>
-              <span class="db-pipeline__lbl">Sensitive</span>
-            </div>
-            <div class="db-pipeline__arrow">→</div>
-            <div class="db-pipeline__step">
-              <span class="db-pipeline__num" id="db-pipeline-removed">0</span>
-              <span class="db-pipeline__lbl">Removed</span>
-            </div>
-          </div>
-          <div class="db-pipeline__bar">
-            <div class="db-pipeline__bar-fill" id="db-pipeline-bar-fill"></div>
-          </div>
-        </section>
+          <div class="db-legend" id="db-legend"></div>
+        </header>
+        <div class="db-chart" id="db-chart">
+          <div class="db-tip" id="db-tip" hidden></div>
+        </div>
+      </section>
 
-        <!-- Data Type Breakdown -->
-        <section class="db-card" id="db-card-breakdown">
-          <div class="db-card__head">
-            <h2 class="db-card__title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-              Sensitive Data Types
-            </h2>
+      <!-- Category breakdown -->
+      <section class="db-card db-card--cats">
+        <header class="db-card__head">
+          <div>
+            <h2 class="db-card__title">What was caught</h2>
+            <p class="db-card__sub">Share of redacted items · click a row for detail</p>
           </div>
-          <div class="db-breakdown" id="db-breakdown"></div>
-        </section>
+        </header>
+        <div class="db-share" id="db-share" role="img" aria-label="Share of redactions by category"></div>
+        <ul class="db-cats" id="db-cats"></ul>
+        <p class="db-note" id="db-cats-note" hidden></p>
+      </section>
 
-        <!-- Top Protected Domains -->
-        <section class="db-card" id="db-card-domains">
-          <div class="db-card__head">
-            <h2 class="db-card__title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-              Top Protected Domains
-            </h2>
+      <!-- Top sites -->
+      <section class="db-card db-card--sites">
+        <header class="db-card__head">
+          <div>
+            <h2 class="db-card__title">Top sites</h2>
+            <p class="db-card__sub">Click a site to filter sessions</p>
           </div>
-          <ul class="db-domains" id="db-domains"></ul>
-        </section>
+        </header>
+        <ul class="db-sites" id="db-sites"></ul>
+      </section>
 
-      </div>
-
-      <!-- Right column — Session History -->
-      <div class="db-col db-col--right">
-        <section class="db-card db-card--full" id="db-card-history">
-          <div class="db-card__head">
-            <h2 class="db-card__title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Session History
-            </h2>
-            <button class="db-btn db-btn--danger db-btn--sm" id="db-clear-btn" title="Clear all history">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-              Clear History
+      <!-- Session history -->
+      <section class="db-card db-card--history">
+        <header class="db-card__head db-card__head--wrap">
+          <div>
+            <h2 class="db-card__title">Session history</h2>
+            <p class="db-card__sub" id="db-history-sub">&nbsp;</p>
+          </div>
+          <div class="db-toolbar">
+            <label class="db-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="search" id="db-search" placeholder="Search tasks or sites" aria-label="Search sessions" />
+              <kbd>/</kbd>
+            </label>
+            <button class="db-btn db-btn--danger db-btn--sm" id="db-clear-btn" title="Delete all session history">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              <span class="db-hide-sm">Clear all</span>
             </button>
           </div>
+        </header>
 
-          <div class="db-table-wrap">
-            <table class="db-table" id="db-table" aria-label="Session history">
-              <thead>
-                <tr>
-                  <th>Date &amp; Time</th>
-                  <th>Domain</th>
-                  <th>Task</th>
-                  <th class="db-th--num">Found</th>
-                  <th class="db-th--num">Sensitive</th>
-                  <th class="db-th--num">Removed</th>
-                  <th class="db-th--num">Rate</th>
-                </tr>
-              </thead>
-              <tbody id="db-table-body"></tbody>
-            </table>
+        <div class="db-filter-chip" id="db-filter-chip" hidden>
+          <span>Site: <strong id="db-filter-site"></strong></span>
+          <button id="db-filter-clear" aria-label="Clear site filter">×</button>
+        </div>
+
+        <div class="db-table-wrap">
+          <table class="db-table" aria-label="Session history">
+            <thead>
+              <tr>
+                <th><button class="db-sort" data-sort="time">When</button></th>
+                <th><button class="db-sort" data-sort="domain">Site</button></th>
+                <th>Task</th>
+                <th class="db-th--num"><button class="db-sort" data-sort="items">Redacted</button></th>
+                <th class="db-th--num db-hide-md"><button class="db-sort" data-sort="steps">Steps</button></th>
+                <th class="db-th--num db-hide-md"><button class="db-sort" data-sort="duration">Time</button></th>
+                <th class="db-th--act"><span class="db-sr">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="db-table-body"></tbody>
+          </table>
+          <p class="db-table-empty" id="db-table-empty" hidden>No sessions match.</p>
+        </div>
+
+        <footer class="db-pager" id="db-pager">
+          <span id="db-pager-info"></span>
+          <div class="db-pager__btns">
+            <button class="db-btn db-btn--ghost db-btn--sm" id="db-prev">Prev</button>
+            <button class="db-btn db-btn--ghost db-btn--sm" id="db-next">Next</button>
           </div>
-        </section>
-      </div>
-
+        </footer>
+      </section>
     </div>
-
   </main>
 
+  <!-- Toast -->
+  <div class="db-toast" id="db-toast" role="status" aria-live="polite" hidden>
+    <span id="db-toast-msg"></span>
+    <button id="db-toast-undo">Undo</button>
+  </div>
+
   <!-- Confirm modal -->
-  <div class="db-modal-overlay" id="db-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="db-modal-title">
-    <div class="db-modal">
-      <div class="db-modal__icon">
+  <div class="db-modal-overlay" id="db-modal-overlay" hidden>
+    <div class="db-modal" role="dialog" aria-modal="true" aria-labelledby="db-modal-title">
+      <div class="db-modal__icon" aria-hidden="true">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
       </div>
       <h3 class="db-modal__title" id="db-modal-title">Clear all history?</h3>
-      <p class="db-modal__body">This will permanently delete all <strong id="db-modal-count">0</strong> session records. This cannot be undone.</p>
+      <p class="db-modal__body">This permanently deletes all <strong id="db-modal-count">0</strong> session records. Export a CSV first if you want a copy.</p>
       <div class="db-modal__actions">
         <button class="db-btn db-btn--ghost" id="db-modal-cancel">Cancel</button>
-        <button class="db-btn db-btn--danger" id="db-modal-confirm">Yes, clear everything</button>
+        <button class="db-btn db-btn--danger" id="db-modal-confirm">Delete everything</button>
       </div>
     </div>
   </div>
