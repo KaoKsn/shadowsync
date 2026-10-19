@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrivSight — Autofill Profile</title>
+  <link rel="stylesheet" href="profile.css" />
+</head>
+<body>
+  <header class="pf-header">
+    <img src="../icons/icon48.png" alt="" class="pf-logo" />
+    <div>
+      <h1>Autofill profile</h1>
+      <p class="pf-sub">Stored only in this browser. Never sent to the PrivSight agent or any server.</p>
+    </div>
+  </header>
+
+  <main class="pf-main">
+    <!-- Shown when opened from the side panel for a specific site -->
+    <section class="pf-card pf-site" id="pf-site" hidden>
+      <div>
+        <h2>ID &amp; bank autofill on <span id="pf-site-name"></span></h2>
+        <p>When on, PrivSight may fill government IDs and bank details on this site. Only allow sites you trust.</p>
+      </div>
+      <label class="pf-toggle">
+        <input type="checkbox" id="pf-site-toggle" />
+        <span class="pf-toggle__slider"></span>
+      </label>
+    </section>
+
+    <section class="pf-card">
+      <div class="pf-row">
+        <div>
+          <h2>Autofill</h2>
+          <p>Fill everyday details (name, contact, address, education, work) on forms automatically.</p>
+        </div>
+        <label class="pf-toggle">
+          <input type="checkbox" id="pf-enabled" />
+          <span class="pf-toggle__slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="pf-card">
+      <h2>Sites allowed to receive IDs &amp; bank details</h2>
+      <p>Government IDs and bank details are filled only on these sites. Everywhere else those fields are left blank.</p>
+      <ul class="pf-sites" id="pf-sites"></ul>
+      <p class="pf-empty" id="pf-sites-empty">No sites allowed.</p>
+    </section>
+
+    <form id="pf-form" class="pf-form" autocomplete="off">
+      <div id="pf-groups"></div>
+      <div class="pf-actions">
+        <button type="submit" class="pf-btn pf-btn--primary">Save profile</button>
+        <button type="button" class="pf-btn pf-btn--danger" id="pf-clear">Clear profile</button>
+        <span class="pf-status" id="pf-status" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+  </main>
+
+  <script src="../content/pii-config.js"></script>
+  <script src="profile.js"></script>
+</body>
+</html>

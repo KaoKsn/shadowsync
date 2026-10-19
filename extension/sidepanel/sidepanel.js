@@ -76,7 +76,7 @@
     understanding_page: { label: 'Thinking',    dotClass: 'working',   working: true  },
     planning:           { label: 'Planning',    dotClass: 'working',   working: true  },
     executing:          { label: 'Executing',   dotClass: 'working',   working: true  },
-    user_action:        { label: 'Action Needed', dotClass: 'working', working: false },
+    user_action:        { label: 'Action Needed', dotClass: 'working', working: true },
     completed:          { label: 'Completed',   dotClass: 'completed', working: false },
     error:              { label: 'Error',       dotClass: 'error',     working: false },
   };
@@ -101,6 +101,7 @@
     statusDot:       $('ps-status-dot'),
     statusText:      $('ps-status-text'),
     dashboardBtn:    $('ps-dashboard-btn'),
+    profileBtn:      $('ps-profile-btn'),
     closeBtn:        $('ps-close-btn'),
     chat:            $('ps-chat'),
     idle:            $('ps-idle'),
@@ -366,6 +367,66 @@
     });
   }
 
+  function waitForHumanFormSubmission(tabId) {
+    return new Promise((resolve) => {
+      const finish = (result) => {
+        chrome.runtime.onMessage.removeListener(onMessage);
+        chrome.tabs.onRemoved.removeListener(onTabRemoved);
+        if (userResumeResolver === finish) userResumeResolver = null;
+        resolve(result);
+      };
+      const onMessage = (message, sender) => {
+        if (message?.type === 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' && sender.tab?.id === tabId) finish('submitted');
+      };
+      const onTabRemoved = (removedTabId) => {
+        if (removedTabId === tabId) finish('stop');
+      };
+      userResumeResolver = finish;
+      chrome.runtime.onMessage.addListener(onMessage);
+      chrome.tabs.onRemoved.addListener(onTabRemoved);
+    });
+  }
+
+  async function pauseForHumanInput(instruction) {
+    const tabId = activeTabId;
+    updateAgentStatus('user_action');
+    renderActivity(null);
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'PAUSE_PII_AUTOFILL_FOR_HUMAN_INPUT' }, () => void chrome.runtime.lastError);
+    await setUserInteractiveMode(true);
+    isLoopPausedForUser = true;
+    if (el.userPromptText) el.userPromptText.textContent = instruction;
+    if (el.resumeBtn) {
+      el.resumeBtn.textContent = 'OK';
+      el.resumeBtn.disabled = false;
+    }
+    if (el.cancelBtn) el.cancelBtn.textContent = 'Stop';
+    if (el.userPrompt) el.userPrompt.style.display = 'flex';
+
+    const resultPromise = waitForHumanFormSubmission(tabId);
+    // Watch for the submit immediately; the user may submit without clicking OK.
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'ARM_HUMAN_SUBMIT' }, () => void chrome.runtime.lastError);
+    const result = await resultPromise;
+    isLoopPausedForUser = false;
+    if (el.userPrompt) el.userPrompt.style.display = 'none';
+    if (el.resumeBtn) {
+      el.resumeBtn.textContent = 'OK';
+      el.resumeBtn.disabled = false;
+    }
+
+    if (result === 'submitted') {
+      await waitForTabReady(tabId).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (tabId) chrome.tabs.sendMessage(tabId, { type: 'RESUME_PII_AUTOFILL' }, () => void chrome.runtime.lastError);
+      // Same-document (SPA) submits keep the old overlay, which is still in
+      // interactive mode; switch it back before re-locking.
+      await setUserInteractiveMode(false);
+      await lockPage();
+    }
+    // On stop/cancel the loop's cleanup (or stopAgent) unlocks the page, so
+    // re-entering agent mode here would only race with that unlock.
+    return result;
+  }
+
   // ══════════════════════════════════════════════════════════════
   // OVERLAY CONTROLS
   // ══════════════════════════════════════════════════════════════
@@ -411,6 +472,8 @@
                 'content/redactor.js',
                 'content/faceRedaction.js',
                 'content/qrMask.js',
+                'content/pii-config.js',
+                'content/pii-autofill.js',
                 'content/agent.js',
               ],
             },
@@ -541,7 +604,7 @@
   // ══════════════════════════════════════════════════════════════
   // AGENT EXECUTION LOOP (Backend Integration Guide)
   // ══════════════════════════════════════════════════════════════
-  const MAX_SAFETY_TURNS = 25;
+  const MAX_SAFETY_TURNS = 10;
 
   /**
    * startAgent(prompt)
@@ -603,7 +666,12 @@
    */
   async function runAgentLoop(taskGoal, sessionId, domain) {
     let turnCount = 0;
+    let stepCount = 0;  // 0-indexed step counter sent in the snapshot
     let isComplete = false;
+    let submittedGateKey = null;
+    // Track the previous snapshot's elements so we can compute changed_since_last_step
+    let prevElements = [];
+    let lastElements = [];  // elements from the most recent snapshot (reused for screenshot calls)
 
     updateAgentStatus('connecting');
     renderActivity('connecting', 'Connecting to agent...');
@@ -627,10 +695,31 @@
 
         // ── STEP A: Capture sanitized DOM + redacted screenshot ──
         updateAgentStatus('reading_page');
-        renderActivity('reading_page', `Turn ${turnCount + 1}: Scrubbing DOM and capturing screenshot...`);
+        renderActivity('reading_page', `Step ${stepCount + 1}: Scrubbing DOM and capturing screenshot...`);
 
         const capturedState = await captureActiveTabState();
         if (activeLoopAborted) break;
+
+        // Gate detection is local-only. Never send this page snapshot to the
+        // backend until the user has completed and submitted the form.
+        if (capturedState.human_gate && capturedState.human_gate_key !== submittedGateKey) {
+          const humanChoice = await pauseForHumanInput(
+            `This page needs your input (${capturedState.human_gate}). Enter it directly on the page, then submit or continue. PrivSight will resume after submission.`
+          );
+          if (humanChoice !== 'submitted' || activeLoopAborted) {
+            // stopAgent() already cleaned up and reported if it set the abort flag.
+            if (!activeLoopAborted) {
+              await AgentBackendClient.deleteSession(sessionId);
+              addMessage('agent', 'Task stopped by user.');
+              activeLoopAborted = true;
+              updateAgentStatus('idle');
+            }
+            break;
+          }
+          submittedGateKey = capturedState.human_gate_key;
+          renderActivity('reading_page', 'Form submitted. Capturing a fresh sanitized page snapshot...');
+          continue;
+        }
 
         // Push real redaction stats from DOMRedactor to the UI
         if (capturedState.stats) {
@@ -640,33 +729,80 @@
           updatePrivacyStats(stats);
         }
 
-        // ── STEP B: POST /turn to Backend ──
+        // ── Compute changed_since_last_step ──────────────────────────────
+        // Compare current elements to the previous snapshot by mark_id.
+        // An element is "changed" if its text, value, or redacted flag differs.
+        const currentElements = capturedState.sanitized_dom || [];
+        const changedSinceLastStep = [];
+        if (prevElements.length > 0) {
+          const prevMap = new Map(prevElements.map((e) => [e.mark_id, e]));
+          currentElements.forEach((el) => {
+            const prev = prevMap.get(el.mark_id);
+            if (!prev ||
+                prev.text !== el.text ||
+                prev.value !== el.value ||
+                prev.redacted !== el.redacted) {
+              changedSinceLastStep.push(el.mark_id);
+            }
+          });
+        }
+        prevElements = currentElements;
+        lastElements = currentElements;
+
+        // ── STEP B: POST /task/start (first) or /task/step (subsequent) ──
         updateAgentStatus('planning');
-        renderActivity('planning', `Turn ${turnCount + 1}: Waiting for agent reasoning...`);
+        renderActivity('planning', `Step ${stepCount + 1}: Waiting for agent reasoning...`);
 
         const turnPayload = {
           sessionId,
-          taskGoal: turnCount === 0 ? taskGoal : '', // only used on first turn
+          taskGoal: taskGoal,
           sanitizedDom: capturedState.sanitized_dom || [],
           sanitizedScreenshotB64: capturedState.sanitized_screenshot_b64 || '',
+          step: stepCount,
+          changedSinceLastStep,
         };
 
-        const turnResponse = await AgentBackendClient.postTurn(turnPayload);
+        let turnResponse = await AgentBackendClient.postTurn(turnPayload);
         if (activeLoopAborted) break;
 
-        console.log(`[PrivSight Loop] Turn ${turnCount + 1} response:`, turnResponse);
+        // A screenshot is sent only when requested. Keep its element numbering
+        // and DOM snapshot identical to the turn that requested it.
+        let screenshotRequests = 0;
+        while (turnResponse.type === 'REQUEST_SCREENSHOT' && !activeLoopAborted) {
+          if (++screenshotRequests > 2) throw new Error('The agent requested too many screenshots for the same page state.');
+          const screenshotB64 = capturedState.sanitized_screenshot_b64 || '';
+          if (!screenshotB64) throw new Error('The agent requested a screenshot, but the page capture did not produce one.');
+          turnResponse = await AgentBackendClient.postTaskScreenshot({
+            sessionId,
+            task: taskGoal,
+            step: stepCount,
+            elements: currentElements,
+            screenshotB64,
+          });
+        }
+        if (activeLoopAborted) break;
+
+        console.log(`[PrivSight Loop] Step ${stepCount + 1} response:`, turnResponse);
 
         // Record reasoning if provided
         if (turnResponse.reasoning) {
           renderActivity('planning', turnResponse.reasoning);
         }
 
-        // Check completion flag
+        // Check completion / failure flags
         if (turnResponse.is_complete || turnResponse.type === 'DONE') {
           isComplete = true;
-          const finalReply = turnResponse.text || "Task completed successfully while keeping your sensitive data protected.";
+          const finalReply = turnResponse.text || turnResponse.summary || "Task completed successfully while keeping your sensitive data protected.";
           addMessage('agent', finalReply);
           updateAgentStatus('completed');
+          renderActivity(null);
+          break;
+        }
+
+        if (turnResponse.is_failed) {
+          const failMsg = turnResponse.text || turnResponse.summary || 'The agent encountered an error completing the task.';
+          addMessage('agent', `❌ ${failMsg}`);
+          updateAgentStatus('error');
           renderActivity(null);
           break;
         }
@@ -723,35 +859,20 @@
           }
 
           case 'USER': {
-            // Pause loop, display instruction, wait for user confirmation
-            updateAgentStatus('user_action');
-            renderActivity(null);
-            await setUserInteractiveMode(true);
-
-            const promptText = turnResponse.text || 'Manual action required. Please perform the step on the page, then click Resume.';
-            addMessage('agent', `⚠️ Action required: ${promptText}`);
-
-            if (el.userPrompt && el.userPromptText) {
-              el.userPromptText.textContent = promptText;
-              el.userPrompt.style.display = 'block';
-            }
-
-            // Wait for user to click Resume or Cancel
-            const userChoice = await new Promise((resolve) => {
-              userResumeResolver = resolve;
-            });
-
-            if (el.userPrompt) el.userPrompt.style.display = 'none';
-            await setUserInteractiveMode(false);
-
-            if (userChoice === 'cancel' || activeLoopAborted) {
-              await AgentBackendClient.deleteSession(sessionId);
-              addMessage('agent', 'Task cancelled by user.');
-              activeLoopAborted = true;
+            const promptText = turnResponse.text || 'The agent needs your input. Enter it directly on the page, then submit or continue.';
+            addMessage('agent', 'Action required. Enter private information directly on the page; it will not be sent to the agent.');
+            const userChoice = await pauseForHumanInput(`${promptText} Submit or continue on the page when finished. PrivSight will resume after submission.`);
+            if (userChoice !== 'submitted' || activeLoopAborted) {
+              // stopAgent() already cleaned up and reported if it set the abort flag.
+              if (!activeLoopAborted) {
+                await AgentBackendClient.deleteSession(sessionId);
+                addMessage('agent', 'Task stopped by user.');
+                activeLoopAborted = true;
+                updateAgentStatus('idle');
+              }
               break;
             }
-
-            // User clicked resume: loop continues normally
+            if (capturedState.human_gate) submittedGateKey = capturedState.human_gate_key;
             renderActivity('reading_page', 'Resuming agent loop with updated page state...');
             break;
           }
@@ -766,6 +887,9 @@
         }
 
         turnCount++;
+        // The screenshot request was handled against this step's unchanged DOM;
+        // the next loop captures and numbers a fresh page state.
+        stepCount++;
         // Small delay to allow DOM render between turns
         await new Promise((r) => setTimeout(r, 600));
       }
@@ -804,8 +928,8 @@
       }
 
       console.error('[PrivSight Loop] Execution failed:', error);
-      const msg = error.message?.includes('Failed to fetch')
-        ? 'Could not connect to backend at http://localhost:8000. Please ensure the agent backend server is running and accessible.'
+      const msg = error.message?.includes('Failed to fetch') || error.message?.includes('WebSocket')
+        ? 'Could not connect to backend at ws://localhost:8001/ws/task. Please ensure the WebSocket backend server is running.'
         : `Agent error: ${error.message}`;
 
       addMessage('agent', `❌ ${msg}`);
@@ -982,6 +1106,18 @@
     chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
   }
 
+  // Opens the autofill profile, offering the ID/bank toggle for the current site.
+  async function openProfile() {
+    let site = '';
+    try {
+      const tab = await resolveActiveTab();
+      const url = new URL(tab?.url || '');
+      if (/^https?:$/.test(url.protocol)) site = url.origin;
+    } catch (_) {}
+    const query = site ? `?site=${encodeURIComponent(site)}` : '';
+    chrome.tabs.create({ url: chrome.runtime.getURL(`profile/profile.html${query}`) });
+  }
+
   // ══════════════════════════════════════════════════════════════
   // EVENT HANDLERS & INPUT AUTO-RESIZE
   // ══════════════════════════════════════════════════════════════
@@ -1026,6 +1162,7 @@
     initTheme();
 
     el.dashboardBtn.addEventListener('click', openDashboard);
+    if (el.profileBtn) el.profileBtn.addEventListener('click', openProfile);
     el.closeBtn.addEventListener('click', async () => {
       await stopAgent();
       window.close();
@@ -1057,18 +1194,25 @@
     // Human-in-the-loop Resume & Cancel buttons
     if (el.resumeBtn) {
       el.resumeBtn.addEventListener('click', () => {
-        if (userResumeResolver) {
-          userResumeResolver('resume');
-          userResumeResolver = null;
-        }
+        if (!userResumeResolver || el.resumeBtn.disabled) return;
+        el.resumeBtn.disabled = true;
+        el.resumeBtn.textContent = 'Waiting for page submission…';
+        chrome.tabs.sendMessage(activeTabId, { type: 'ARM_HUMAN_SUBMIT' }, (response) => {
+          if (chrome.runtime.lastError || !response?.ok) {
+            if (el.resumeBtn) {
+              el.resumeBtn.disabled = false;
+              el.resumeBtn.textContent = 'Try again';
+            }
+            if (el.userPromptText) el.userPromptText.textContent = 'PrivSight could not detect the page form. Reload the page and try again, or stop this task.';
+          }
+        });
       });
     }
 
     if (el.cancelBtn) {
       el.cancelBtn.addEventListener('click', () => {
         if (userResumeResolver) {
-          userResumeResolver('cancel');
-          userResumeResolver = null;
+          userResumeResolver('stop');
         }
       });
     }

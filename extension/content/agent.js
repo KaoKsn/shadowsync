@@ -42,6 +42,9 @@
   let isPageLocked = false;
   let isExecutingAgentAction = false;
   let isUserInteractiveMode = false;
+  let humanSubmitListener = null;
+  let humanSubmitClickListener = null;
+  let humanSubmitClickTimer = null;
   let overlayWatchdogTimer = null;
 
   // ─── Main Browser User Interaction Lock ───────────────────
@@ -132,9 +135,7 @@
     .veil {
       position: absolute;
       inset: 0;
-      background: rgba(4, 6, 14, 0.40);
-      backdrop-filter: blur(1.5px);
-      -webkit-backdrop-filter: blur(1.5px);
+      background: rgba(4, 6, 14, 0.08);
       animation: veil-in 0.4s ease-out both;
       transition: opacity 0.3s ease;
     }
@@ -155,20 +156,20 @@
       inset: 0;
       pointer-events: none;
       box-shadow:
-        inset 0 0 50px rgba(56, 189, 248, 0.35),
-        inset 0 0 100px rgba(56, 189, 248, 0.20),
-        inset 0 0 160px rgba(56, 189, 248, 0.12);
+        inset 0 0 30px rgba(56, 189, 248, 0.18),
+        inset 0 0 70px rgba(56, 189, 248, 0.10),
+        inset 0 0 120px rgba(56, 189, 248, 0.06);
       animation: ambient-pulse 3s ease-in-out infinite alternate;
       transition: opacity 0.3s ease;
     }
 
     .privsight-shell.interactive .aurora-ambient-glow {
-      opacity: 0.4;
+      opacity: 0.35;
     }
 
     @keyframes ambient-pulse {
-      0%   { opacity: 0.7; }
-      100% { opacity: 1.0; }
+      0%   { opacity: 0.55; }
+      100% { opacity: 0.85; }
     }
 
     /* Blue Outline Edge Beams */
@@ -185,73 +186,73 @@
 
     .aurora-top {
       top: 0; left: 0; right: 0;
-      height: 4.5px;
+      height: 3.5px;
       background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.1) 8%,
-        rgba(56, 189, 248, 0.9) 25%,
-        rgba(125, 211, 252, 1.0) 50%,
-        rgba(56, 189, 248, 0.9) 75%,
-        rgba(56, 189, 248, 0.1) 92%,
+        rgba(56, 189, 248, 0.08) 8%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.88) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.08) 92%,
         transparent 100%
       );
       background-size: 200% 100%;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.95), 0 0 32px rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.55), 0 0 22px rgba(56, 189, 248, 0.28);
       animation: aurora-sweep-h 3s linear infinite;
     }
 
     .aurora-bottom {
       bottom: 0; left: 0; right: 0;
-      height: 4.5px;
+      height: 3.5px;
       background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.1) 8%,
-        rgba(56, 189, 248, 0.9) 25%,
-        rgba(125, 211, 252, 1.0) 50%,
-        rgba(56, 189, 248, 0.9) 75%,
-        rgba(56, 189, 248, 0.1) 92%,
+        rgba(56, 189, 248, 0.08) 8%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.88) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.08) 92%,
         transparent 100%
       );
       background-size: 200% 100%;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.95), 0 0 32px rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.55), 0 0 22px rgba(56, 189, 248, 0.28);
       animation: aurora-sweep-h 3.6s linear infinite reverse;
     }
 
     .aurora-left {
       left: 0; top: 0; bottom: 0;
-      width: 4.5px;
+      width: 3.5px;
       background: linear-gradient(
         180deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.1) 8%,
-        rgba(56, 189, 248, 0.9) 25%,
-        rgba(125, 211, 252, 1.0) 50%,
-        rgba(56, 189, 248, 0.9) 75%,
-        rgba(56, 189, 248, 0.1) 92%,
+        rgba(56, 189, 248, 0.08) 8%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.88) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.08) 92%,
         transparent 100%
       );
       background-size: 100% 200%;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.95), 0 0 32px rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.55), 0 0 22px rgba(56, 189, 248, 0.28);
       animation: aurora-sweep-v 3.2s linear infinite;
     }
 
     .aurora-right {
       right: 0; top: 0; bottom: 0;
-      width: 4.5px;
+      width: 3.5px;
       background: linear-gradient(
         180deg,
         transparent 0%,
-        rgba(56, 189, 248, 0.1) 8%,
-        rgba(56, 189, 248, 0.9) 25%,
-        rgba(125, 211, 252, 1.0) 50%,
-        rgba(56, 189, 248, 0.9) 75%,
-        rgba(56, 189, 248, 0.1) 92%,
+        rgba(56, 189, 248, 0.08) 8%,
+        rgba(56, 189, 248, 0.75) 25%,
+        rgba(125, 211, 252, 0.88) 50%,
+        rgba(56, 189, 248, 0.75) 75%,
+        rgba(56, 189, 248, 0.08) 92%,
         transparent 100%
       );
       background-size: 100% 200%;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.95), 0 0 32px rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.55), 0 0 22px rgba(56, 189, 248, 0.28);
       animation: aurora-sweep-v 3.8s linear infinite reverse;
     }
 
@@ -268,146 +269,28 @@
     /* Corner Blue Blooms */
     .aurora-corner {
       position: absolute;
-      width: 200px;
-      height: 200px;
+      width: 160px;
+      height: 160px;
       pointer-events: none;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.35) 0%, transparent 70%);
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.22) 0%, transparent 70%);
       animation: corner-breathe 3.6s ease-in-out infinite;
       transition: opacity 0.3s ease;
     }
 
     .privsight-shell.interactive .aurora-corner {
-      opacity: 0.35;
+      opacity: 0.25;
     }
 
-    .aurora-corner-tl { top: -60px;    left: -60px;  animation-delay: 0s;    }
-    .aurora-corner-tr { top: -60px;    right: -60px; animation-delay: -0.9s; }
-    .aurora-corner-bl { bottom: -60px; left: -60px;  animation-delay: -1.8s; }
-    .aurora-corner-br { bottom: -60px; right: -60px; animation-delay: -2.7s; }
+    .aurora-corner-tl { top: -50px;    left: -50px;  animation-delay: 0s;    }
+    .aurora-corner-tr { top: -50px;    right: -50px; animation-delay: -0.9s; }
+    .aurora-corner-bl { bottom: -50px; left: -50px;  animation-delay: -1.8s; }
+    .aurora-corner-br { bottom: -50px; right: -50px; animation-delay: -2.7s; }
 
     @keyframes corner-breathe {
-      0%, 100% { opacity: 0.5; transform: scale(0.95); }
-      50%       { opacity: 1.0; transform: scale(1.15); }
+      0%, 100% { opacity: 0.35; transform: scale(0.95); }
+      50%       { opacity: 0.65; transform: scale(1.10); }
     }
-
-    /* Centered PrivSight Logo on Screen */
-    .logo-center {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 16px;
-      animation: logo-rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
-      pointer-events: none;
-      transition: opacity 0.3s ease;
-      z-index: 20;
-    }
-
-    .privsight-shell.interactive .logo-center {
-      opacity: 0;
-    }
-
-    @keyframes logo-rise {
-      from { opacity: 0; transform: translate(-50%, calc(-50% + 14px)); }
-      to   { opacity: 1; transform: translate(-50%, -50%); }
-    }
-
-    .logo-halo {
-      position: relative;
-      width: 120px;
-      height: 120px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .logo-halo::before {
-      content: '';
-      position: absolute;
-      inset: -32px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.35) 0%, transparent 72%);
-      animation: halo-pulse 2.2s ease-in-out infinite;
-    }
-
-    .logo-halo::after {
-      content: '';
-      position: absolute;
-      inset: -16px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(56, 189, 248, 0.20) 0%, transparent 70%);
-      animation: halo-pulse 2.2s ease-in-out infinite;
-      animation-delay: 0.5s;
-    }
-
-    @keyframes halo-pulse {
-      0%, 100% { opacity: 0.55; transform: scale(0.95); }
-      50%       { opacity: 1.0;  transform: scale(1.08); }
-    }
-
-    .logo-icon-wrap {
-      width: 110px;
-      height: 110px;
-      background: transparent;
-      border: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      z-index: 1;
-    }
-
-    .logo-agent-img {
-      width: 104px;
-      height: 104px;
-      object-fit: contain;
-      display: block;
-      filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.85)) drop-shadow(0 0 32px rgba(56, 189, 248, 0.45));
-      animation: logo-float 2.8s ease-in-out infinite;
-    }
-
-    @keyframes logo-float {
-      0%, 100% {
-        transform: translateY(0px) scale(1);
-        filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.8)) drop-shadow(0 0 28px rgba(56, 189, 248, 0.4));
-      }
-      50% {
-        transform: translateY(-4px) scale(1.05);
-        filter: drop-shadow(0 0 22px rgba(56, 189, 248, 0.98)) drop-shadow(0 0 42px rgba(56, 189, 248, 0.65));
-      }
-    }
-
-    .logo-label {
-      font-size: 14px;
-      font-weight: 600;
-      color: rgba(186, 230, 253, 0.95);
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      animation: label-breathe 2.4s ease-in-out infinite;
-      text-shadow: 0 0 16px rgba(56, 189, 248, 0.85);
-    }
-
-    @keyframes label-breathe {
-      0%, 100% { opacity: 0.6; }
-      50%       { opacity: 1; }
-    }
-
-    .dot-1, .dot-2, .dot-3 {
-      display: inline-block;
-      animation: dot-blink 1.4s ease-in-out infinite;
-    }
-    .dot-2 { animation-delay: 0.2s; }
-    .dot-3 { animation-delay: 0.4s; }
-
-    @keyframes dot-blink {
-      0%, 100% { opacity: 0.2; }
-      50%       { opacity: 1;   }
-    }
-
     .privsight-shell.leaving {
       animation: overlay-out 0.35s ease-in both;
       pointer-events: none !important;
@@ -539,20 +422,6 @@
       el.className = cls;
       shell.appendChild(el);
     });
-
-    const logoCenter = document.createElement('div');
-    logoCenter.className = 'logo-center';
-    logoCenter.innerHTML = `
-      <div class="logo-halo">
-        <div class="logo-icon-wrap">
-          <img src="${chrome.runtime.getURL('icons/icon256.png')}" alt="PrivSight" class="logo-agent-img">
-        </div>
-      </div>
-      <span class="logo-label">
-        Working<span class="dot-1">.</span><span class="dot-2">.</span><span class="dot-3">.</span>
-      </span>
-    `;
-    shell.appendChild(logoCenter);
     shadow.appendChild(shell);
 
     // Prefer documentElement so overlay works even before <body> exists
@@ -672,6 +541,7 @@
       createOverlay();
     }
 
+    const humanGate = detectHumanInputGate();
     activeHints.clear();
     const redactor = getRedactor();
 
@@ -785,10 +655,81 @@
       });
       hintContainer.appendChild(badge);
 
-      // JSON-like representation for LLM payload (only data_hint and tag for viewport elements)
+      // ── Derive richer element metadata for the new backend snapshot schema ──
+      const tagName = el.tagName ? el.tagName.toLowerCase() : 'div';
+
+      // ARIA role: prefer explicit role attribute, fall back to implicit role by tag
+      const explicitRole = el.getAttribute('role') || null;
+      const implicitRoleMap = {
+        a: 'link', button: 'button', input: 'textbox', textarea: 'textbox',
+        select: 'listbox', img: 'img', checkbox: 'checkbox', radio: 'radio',
+      };
+      const inputType = tagName === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : null;
+      const implicitRole = inputType === 'checkbox' ? 'checkbox'
+        : inputType === 'radio' ? 'radio'
+        : implicitRoleMap[tagName] || null;
+      const role = explicitRole || implicitRole;
+
+      // Visible text content (aria-label preferred, then textContent, then value/placeholder)
+      let textContent = null;
+      let ariaLabel = el.getAttribute('aria-label') || null;
+      const labelledBy = el.getAttribute('aria-labelledby');
+      if (!ariaLabel && labelledBy) {
+        ariaLabel = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || '').filter(Boolean).join(' ');
+      }
+      if (!ariaLabel && el.labels?.length) ariaLabel = Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ');
+      if (ariaLabel) {
+        textContent = ariaLabel.trim() || null;
+      } else if (tagName !== 'input' && tagName !== 'textarea' && tagName !== 'select') {
+        const raw = (el.textContent || '').trim();
+        textContent = raw.length > 0 && raw.length <= 200 ? raw : (raw.length > 200 ? raw.substring(0, 200) + '…' : null);
+      }
+
+      // Never send user-entered form values to the model. Labels and field type
+      // are sufficient for the agent to identify controls by their stable mark_id.
+      const elementValue = null;
+
+      // Redaction: detect if this element's text or value was scrubbed
+      const isRedacted = (
+        (textContent && textContent.includes('[REDACTED]')) ||
+        (elementValue && elementValue.includes('[REDACTED]'))
+      );
+
+      // Determine redaction reason based on input type / field characteristics
+      let redactionReason = undefined;
+      if (isRedacted) {
+        const inputTypeAttr = (el.getAttribute('type') || '').toLowerCase();
+        if (inputTypeAttr === 'password') {
+          redactionReason = 'password';
+        } else if (tagName === 'img') {
+          redactionReason = 'contains_face';
+        } else {
+          redactionReason = 'pii';
+        }
+      }
+
+      // If redacted, strip the actual [REDACTED] placeholder from what we send
+      const safeText  = isRedacted ? null : textContent;
+      const safeValue = isRedacted ? null : elementValue;
+
+      // Unified element descriptor compatible with the new backend snapshot schema
       sanitizedDom.push({
-        data_hint: hint,
-        tag: el.tagName ? el.tagName.toLowerCase() : 'div',
+        // New backend fields
+        mark_id:          index,
+        tag:              tagName,
+        role:             role,
+        input_type:       inputType,
+        text:             safeText,
+        value:            safeValue,
+        name:             el.getAttribute('name') || null,
+        placeholder:      el.getAttribute('placeholder') || null,
+        aria_label:       ariaLabel,
+        disabled:         Boolean(el.disabled),
+        checked:          null,
+        redacted:         isRedacted,
+        redaction_reason: redactionReason,
+        // Legacy field kept for backward compatibility with action executor (findElement)
+        data_hint:        hint,
       });
     });
 
@@ -798,6 +739,7 @@
     try {
       // 4. Capture screenshot — hide Aurora overlay only for the ~30ms capture
       // window so the AI vision model never sees the borders/logo, then restore.
+      const restoreFormValues = maskFormValuesForScreenshot();
       hideOverlayForCapture();
 
       // Two-frame flush: ensures browser composites the hidden overlay before
@@ -836,6 +778,7 @@
           capturedDataUrl = canvas.toDataURL('image/png');
         }
       } finally {
+        restoreFormValues();
         // Immediately restore Aurora overlay — it was gone for ≤~55ms total
         showOverlayAfterCapture();
       }
@@ -908,8 +851,95 @@
     return {
       sanitized_dom: sanitizedDom,
       sanitized_screenshot_b64: screenshotB64,
+      human_gate: humanGate,
+      human_gate_key: humanGate ? `${location.origin}${location.pathname}` : null,
       stats: scrubbingStats,
     };
+  }
+
+  function detectHumanInputGate() {
+    const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const visible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    };
+    const controls = Array.from(document.querySelectorAll('input, textarea, select')).filter(visible);
+    const labels = controls.map((field) => {
+      const labelled = field.getAttribute('aria-label') || '';
+      const references = (field.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || '').join(' ');
+      const explicit = field.labels ? Array.from(field.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
+      const enclosingLabel = field.closest('label')?.innerText || field.closest('label')?.textContent || '';
+      return normalize([field.name, field.id, field.placeholder, labelled, references, explicit, enclosingLabel, field.autocomplete].join(' '));
+    }).join(' ');
+    const url = normalize(location.pathname);
+    const title = normalize(document.title);
+    const headings = normalize(Array.from(document.querySelectorAll('h1,h2,[role="heading"]')).filter(visible).map((el) => el.innerText || el.textContent).join(' '));
+    const controlsPresent = controls.length > 0;
+    const pageText = normalize((document.body?.innerText || '').slice(0, 5000));
+    const buttonText = normalize(Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible).map((el) => el.innerText || el.textContent).join(' '));
+    const hasPassword = controls.some((field) => field.type === 'password');
+    const privateField = /\b(?:email|phone|mobile|address|full name|first name|last name|aadhaar|passport|bank account|student id|usn|date of birth)\b/.test(labels);
+    const humanSubmit = /\b(?:submit|continue|register|sign up|log in|login|verify|apply|save profile|next)\b/.test(buttonText);
+
+    if (controlsPresent && /\b(?:one time code|otp|verification code|security code|captcha|human verification)\b/.test(labels)) return 'Verification';
+    if (controlsPresent && /\b(?:credit card|card number|cvv|cvc|payment method)\b/.test(labels)) return 'Payment details';
+    if (controlsPresent && /\b(?:checkout|payment)\b/.test(`${url} ${title} ${headings}`)) return 'Payment details';
+    if (hasPassword || (controlsPresent && /\b(?:login|log in|sign in|signin|sign up|signup|register|registration|create account)\b/.test(`${url} ${title} ${headings}`))) return 'Login or account details';
+    if (/\b(?:consent|cookie preferences|privacy choices)\b/.test(`${url} ${title} ${headings} ${pageText}`) && /\b(?:accept|reject|save choices|manage preferences)\b/.test(buttonText)) return 'Consent choices';
+    if (controlsPresent && privateField && humanSubmit) return 'Private information';
+    if (controlsPresent && /\b(?:application|scholarship|profile)\b/.test(`${url} ${title} ${headings}`) && /\b(?:email|phone|address|identity|student id)\b/.test(labels)) return 'Private information';
+    return null;
+  }
+
+  function maskFormValuesForScreenshot() {
+    const restore = [];
+    document.querySelectorAll('input, textarea, select').forEach((field) => {
+      if (field instanceof HTMLInputElement && ['checkbox', 'radio'].includes(field.type)) {
+        if (field.checked) { restore.push(() => { field.checked = true; }); field.checked = false; }
+        return;
+      }
+      if (field instanceof HTMLInputElement && field.type === 'file' && field.value) {
+        const oldVisibility = field.style.getPropertyValue('visibility');
+        const oldPriority = field.style.getPropertyPriority('visibility');
+        restore.push(() => {
+          if (oldVisibility) field.style.setProperty('visibility', oldVisibility, oldPriority);
+          else field.style.removeProperty('visibility');
+        });
+        field.style.setProperty('visibility', 'hidden', 'important');
+        return;
+      }
+      if (field instanceof HTMLInputElement && ['button', 'submit', 'reset', 'image', 'file', 'hidden'].includes(field.type)) return;
+      if (field instanceof HTMLSelectElement) {
+        const selected = Array.from(field.options).filter((option) => option.selected);
+        if (selected.length) {
+          restore.push(() => { selected.forEach((option) => { option.selected = true; }); });
+          field.selectedIndex = -1;
+        }
+        return;
+      }
+      if (field.value) {
+        const value = field.value;
+        restore.push(() => { field.value = value; });
+        field.value = '';
+      }
+    });
+    return () => restore.reverse().forEach((restoreField) => { try { restoreField(); } catch (_) {} });
+  }
+
+  function disarmHumanSubmitListener() {
+    if (humanSubmitClickTimer) {
+      clearTimeout(humanSubmitClickTimer);
+      humanSubmitClickTimer = null;
+    }
+    if (humanSubmitListener) {
+      document.removeEventListener('submit', humanSubmitListener, true);
+      humanSubmitListener = null;
+    }
+    if (humanSubmitClickListener) {
+      document.removeEventListener('click', humanSubmitClickListener, true);
+      humanSubmitClickListener = null;
+    }
   }
 
   // ─── Action Executor Engine ─────────────────────────────
@@ -1043,6 +1073,7 @@
     }
 
     if (message.type === 'STOP_AGENT') {
+      disarmHumanSubmitListener();
       removeOverlay(message.immediate || false);
       sendResponse({ ok: true, status: 'overlay_removed' });
       return true;
@@ -1058,6 +1089,36 @@
     if (message.type === 'RESUME_AGENT_MODE') {
       setOverlayInteractive(false);
       sendResponse({ ok: true, status: 'interactive_resumed' });
+      return true;
+    }
+
+    if (message.type === 'ARM_HUMAN_SUBMIT') {
+      disarmHumanSubmitListener();
+      humanSubmitListener = () => {
+        disarmHumanSubmitListener();
+        // Notify before a native submission navigates away from this document.
+        chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+      };
+      document.addEventListener('submit', humanSubmitListener, true);
+      humanSubmitClickListener = (event) => {
+        const control = event.target?.closest?.('button, input[type="submit"], input[type="button"], [role="button"]');
+        if (!control) return;
+        const label = [control.innerText, control.value, control.getAttribute('aria-label'), control.getAttribute('title')]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!/\b(?:continue|submit|next|sign in|log in|login|sign up|register|verify|apply|save and continue|accept|reject|agree|allow|save choices|confirm)\b/.test(label)) return;
+
+        // Many single-page forms advance from a button click without dispatching
+        // a native submit event. Give the page time to process that click before
+        // resuming; native form submits are handled immediately above.
+        if (humanSubmitClickTimer) clearTimeout(humanSubmitClickTimer);
+        humanSubmitClickTimer = setTimeout(() => {
+          humanSubmitClickTimer = null;
+          disarmHumanSubmitListener();
+          chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+        }, 800);
+      };
+      document.addEventListener('click', humanSubmitClickListener, true);
+      sendResponse({ ok: true, status: 'waiting_for_submit' });
       return true;
     }
 
@@ -1157,6 +1218,7 @@
   // Called by the re-injection guard at the top of the IIFE when the extension
   // reloads, so old listeners + overlay are torn down before new ones register.
   window.__PRIVSIGHT_AGENT_CLEANUP__ = function cleanup() {
+    disarmHumanSubmitListener();
     stopOverlayWatchdog();
     disableInteractionLock();
     clearTimeout(agentTimer);
@@ -1177,6 +1239,12 @@
   };
 
   window.addEventListener('pagehide', () => {
+    // A qualifying click that navigated away before the 800ms delay elapsed
+    // still counts as a submission; send it now instead of dropping it.
+    if (humanSubmitClickTimer) {
+      chrome.runtime.sendMessage({ type: 'PRIVSIGHT_HUMAN_FORM_SUBMITTED' }, () => void chrome.runtime.lastError);
+    }
+    disarmHumanSubmitListener();
     stopOverlayWatchdog();
     disableInteractionLock();
     clearTimeout(agentTimer);
